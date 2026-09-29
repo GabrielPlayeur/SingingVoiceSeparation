@@ -20,6 +20,8 @@ dependencies = [
     "imageio-ffmpeg>=0.6.0",
     "museval>=0.4.1",
     "stempeg>=0.2.6",
+    "soundfile>=0.14.0",
+    "torchmetrics>=1.9.0",
 ]
 
 [[tool.uv.index]]
