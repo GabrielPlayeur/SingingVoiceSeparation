@@ -34,11 +34,14 @@ class MUSDBTrainDataset(Dataset):
             info = sf.info(os.path.join(d, "mixture.wav"))
             self.track_lengths.append(info.frames)
 
+        n_positions = np.array(self.track_lengths) - self.crop_length
+        self.track_weights = n_positions / n_positions.sum()
+
     def __len__(self):
         return self.epoch_size  # pas de longueur naturelle, on en choisit une
 
     def _sample_crop(self):
-        idx = np.random.randint(len(self.track_dirs))
+        idx = np.random.choice(len(self.track_dirs),  p=self.track_weights)
         track_dir = self.track_dirs[idx]
         max_start = self.track_lengths[idx] - self.crop_length
         start = np.random.randint(0, max_start)
@@ -54,8 +57,8 @@ class MUSDBTrainDataset(Dataset):
             vocals, accompaniment = self._sample_crop()
             if np.abs(vocals).mean() > self.silence_threshold:
                 break
-            else:
-                print(f"Max retries ({self.max_retries}) reached, keeping a silent crop")
+        else:
+            print(f"Max retries ({self.max_retries}) reached, keeping a silent crop")
 
         mixture = vocals + accompaniment
         return {
