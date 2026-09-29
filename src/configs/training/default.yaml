@@ -1,0 +1,5 @@
+max_epochs: 150
+early_stopping_patience: 10
+early_stopping_min_delta: 0.05 # dB
+log_every_n_steps: 50
+evaluate_at_end: true

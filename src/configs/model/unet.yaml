@@ -1,0 +1,5 @@
+base_channels: 16
+depth: 6
+n_fft: 2048
+hop_length: 512
+learning_rate: 0.001
