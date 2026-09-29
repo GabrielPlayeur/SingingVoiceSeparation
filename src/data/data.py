@@ -47,6 +47,12 @@ class MUSDB18DataModule(L.LightningDataModule):
         if os.path.exists(self.hparams.split_path):
             with open(self.hparams.split_path) as f:
                 saved = json.load(f)
+            # if the params have changed
+            if (saved["params"]["val_size"] != self.hparams.val_size or 
+                saved["params"]["random_seed"] != self.hparams.random_seed or 
+                saved["params"]["dataset_path "] != self.hparams.dataset_path 
+                ):
+                return self._build_split(train_dirs)
             return saved["train"], saved["val"]
         return self._build_split(train_dirs)
 
@@ -58,12 +64,13 @@ class MUSDB18DataModule(L.LightningDataModule):
         splitter = GroupShuffleSplit(n_splits=1, test_size=self.hparams.val_size, random_state=self.hparams.random_seed)
         train_idx, val_idx = next(splitter.split(train_dirs, groups=groups))
 
+        params = {"val_size": self.hparams.val_size, "random_seed": self.hparams.random_seed, "dataset_path": self.hparams.dataset_path}
         train_split = [train_dirs[i] for i in train_idx]
         val_split = [train_dirs[i] for i in val_idx]
 
         os.makedirs(os.path.dirname(self.hparams.split_path), exist_ok=True)
         with open(self.hparams.split_path, "w") as f:
-            json.dump({"train": train_split, "val": val_split}, f, indent=2)
+            json.dump({"params": params, "train": train_split, "val": val_split}, f, indent=2)
 
         return train_split, val_split
 
