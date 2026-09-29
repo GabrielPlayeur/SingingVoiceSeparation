@@ -50,10 +50,12 @@ class MUSDBTrainDataset(Dataset):
     def __getitem__(self, index):
         vocals, accompaniment = None, None
         # rejette les extraits sans voix (silence), jusqu'à max_retries essais
-        for _ in range(self.max_retries):
+        for i in range(self.max_retries):
             vocals, accompaniment = self._sample_crop()
             if np.abs(vocals).mean() > self.silence_threshold:
                 break
+            else:
+                print(f"Max retries ({self.max_retries}) reached, keeping a silent crop")
 
         mixture = vocals + accompaniment
         return {
@@ -91,10 +93,10 @@ class MUSDBFullTrackDataset(Dataset):
         track_dir = self.track_dirs[index]
         vocals, vocals_sr = sf.read(os.path.join(track_dir, "vocals.wav"), dtype="float32", always_2d=True)
         if vocals_sr != self.sr:
-            raise ValueError(f"The wav file {os.path.join(track_dir, "vocals.wav")} is at {vocals_sr} but the model needs {self.sr}")
+            raise ValueError(f"The wav file {os.path.join(track_dir, 'vocals.wav')} is at {vocals_sr} but the model needs {self.sr}")
         accompaniment, accompaniment_sr  = sf.read(os.path.join(track_dir, "accompaniment.wav"), dtype="float32", always_2d=True)
         if accompaniment_sr != self.sr:
-            raise ValueError(f"The wav file {os.path.join(track_dir, "accompaniment.wav")} is at {accompaniment_sr} but the model needs {self.sr}")
+            raise ValueError(f"The wav file {os.path.join(track_dir, 'accompaniment.wav')} is at {accompaniment_sr} but the model needs {self.sr}")
         vocals = vocals.mean(axis=1) # stereo -> mono
         accompaniment = accompaniment.mean(axis=1)
         return {

@@ -80,15 +80,17 @@ class MUSDB18DataModule(L.LightningDataModule):
         for track_dir in val_dirs:
             n_frames = sf.info(os.path.join(track_dir, "mixture.wav")).frames
             kept, tries = 0, 0
-            while kept < self.hparams.val_crops_per_track and tries < 50:
+            while kept < self.hparams.val_crops_per_track and tries < self.hparams.max_retries:
                 tries += 1
                 start = int(rng.integers(0, n_frames - self.crop_length))
                 vocals = read_crop(os.path.join(track_dir, "vocals.wav"), start, self.crop_length, sr=self.hparams.sr)
-                if np.abs(vocals).mean() < 1e-4:  # skip silence, redo
+                if np.abs(vocals).mean() < self.hparams.silence_threshold:
                     continue
                 accompaniment = read_crop(os.path.join(track_dir, "accompaniment.wav"), start, self.crop_length, sr=self.hparams.sr)
                 crops.append({"mixture": vocals + accompaniment, "vocals": vocals})
                 kept += 1
+            if kept < self.hparams.val_crops_per_track:
+                print(f"{track_dir}: only {kept}/{self.hparams.val_crops_per_track} crops kept after {self.hparams.max_retries} tries")
         return crops
 
     def setup(self, stage: str) -> None:
