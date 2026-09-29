@@ -11,30 +11,36 @@ import soundfile as sf
 from .dataset import MUSDBTrainDataset, MUSDBFixedDataset, MUSDBFullTrackDataset, read_crop
 
 
+def list_track_dirs(dataset_path, split="train"):
+    base = os.path.join(dataset_path, split)
+    return sorted(
+        os.path.join(base, d) for d in os.listdir(base)
+        if os.path.isdir(os.path.join(base, d))
+    )
+
+
 class MUSDB18DataModule(L.LightningDataModule):
     def __init__(
         self,
         dataset_path: str,
-        sr: int = 44100,
-        crop_seconds: float = 6.0,
-        batch_size: int = 16,
-        epoch_size: int = 2000,
-        val_crops_per_track: int = 5,
-        val_size: float = 0.14,
-        num_workers: int = 4,
-        random_seed: int = 42,
-        split_path: str = "musdb18/split.json",
+        sr: int,
+        crop_seconds: float,
+        batch_size: int,
+        epoch_size: int,
+        val_crops_per_track: int,
+        val_size: float,
+        silence_threshold: float,
+        max_retries: int,
+        num_workers: int,
+        random_seed: int,
+        split_path: str,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
         self.crop_length = int(sr * crop_seconds)
 
     def _get_track_dirs(self, split="train"):
-        base = os.path.join(self.hparams.dataset_path, split)
-        return sorted(
-            os.path.join(base, d) for d in os.listdir(base)
-            if os.path.isdir(os.path.join(base, d))
-        )
+        return list_track_dirs(self.hparams.dataset_path, split)
 
     def _load_split(self, train_dirs):
         # split par artiste, sauvegardé pour être reproductible
@@ -70,10 +76,10 @@ class MUSDB18DataModule(L.LightningDataModule):
             while kept < self.hparams.val_crops_per_track and tries < 50:
                 tries += 1
                 start = int(rng.integers(0, n_frames - self.crop_length))
-                vocals = read_crop(os.path.join(track_dir, "vocals.wav"), start, self.crop_length)
+                vocals = read_crop(os.path.join(track_dir, "vocals.wav"), start, self.crop_length, sr=self.hparams.sr)
                 if np.abs(vocals).mean() < 1e-4:  # skip silence, redo
                     continue
-                accompaniment = read_crop(os.path.join(track_dir, "accompaniment.wav"), start, self.crop_length)
+                accompaniment = read_crop(os.path.join(track_dir, "accompaniment.wav"), start, self.crop_length, sr=self.hparams.sr)
                 crops.append({"mixture": vocals + accompaniment, "vocals": vocals})
                 kept += 1
         return crops
@@ -88,13 +94,16 @@ class MUSDB18DataModule(L.LightningDataModule):
                 crop_length=self.crop_length,
                 sr=self.hparams.sr,
                 epoch_size=self.hparams.epoch_size,
+                silence_threshold=self.hparams.silence_threshold,
+                max_retries=self.hparams.max_retries,
             )
             val_crops = self._build_val_crops(val_dirs)
             self.val_dataset = MUSDBFixedDataset(val_crops)
 
         if stage == "test" or stage is None:
             self.test_dataset = MUSDBFullTrackDataset(
-                track_dirs=self._get_track_dirs("test")
+                track_dirs=self._get_track_dirs("test"),
+                sr=self.hparams.sr
                 )
 
     def train_dataloader(self) -> Any:

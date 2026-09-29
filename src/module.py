@@ -6,11 +6,12 @@ from .models.unet import UNet
 
 class VoiceSeparationModule(L.LightningModule):
     def __init__(self, 
-                 base_channels=16, 
-                 depth=5, 
-                 n_fft=2048, 
-                 hop_length=512,
-                 learning_rate=1e-3
+                 base_channels: int, 
+                 depth: int, 
+                 n_fft: int, 
+                 hop_length: int,
+                 learning_rate: float,
+                 sr: int,
                 ):
         super().__init__()
         self.save_hyperparameters()

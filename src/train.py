@@ -17,7 +17,7 @@ def main(cfg: DictConfig):
 
     datamodule = MUSDB18DataModule(**cfg.data)
 
-    module = VoiceSeparationModule(**cfg.model)
+    module = VoiceSeparationModule(**cfg.model, sr=cfg.data.sr)
 
 
     logger = WandbLogger(
@@ -54,7 +54,6 @@ def main(cfg: DictConfig):
             trainer.checkpoint_callback.best_model_path,
             dataset_path=cfg.data.dataset_path,
             crop_seconds=cfg.data.crop_seconds,
-            sr=cfg.data.sr,
             logger=logger,
         )
 

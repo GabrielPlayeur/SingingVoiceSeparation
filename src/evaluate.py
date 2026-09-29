@@ -10,31 +10,32 @@ import torch
 from lightning import Trainer
 from torchmetrics.functional.audio import scale_invariant_signal_distortion_ratio
 
-from .data import MUSDB18DataModule
+from .data.data import list_track_dirs
+from .data.dataset import MUSDBFullTrackDataset
 from .module import VoiceSeparationModule
 from .inference import separate_full_track
 
 
-def evaluate(checkpoint_path, dataset_path, crop_seconds=6.0, sr=44100, batch_size=16, max_tracks=None, logger=None):
+def evaluate(checkpoint_path, dataset_path, crop_seconds=6.0, batch_size=16, max_tracks=None, logger=None):
     module = VoiceSeparationModule.load_from_checkpoint(checkpoint_path, map_location="cpu")
+    sr = module.hparams.sr
     trainer = Trainer( accelerator="auto",
-                       devices=1, 
+                       devices=1,
                        logger=False,
-                       enable_checkpointing=False, 
+                       enable_checkpointing=False,
                        enable_progress_bar=False
                     )
 
-    datamodule = MUSDB18DataModule(dataset_path=dataset_path, sr=sr)
-    datamodule.setup("test")
+    test_dataset = MUSDBFullTrackDataset(track_dirs=list_track_dirs(dataset_path, "test"), sr=sr)
 
     crop_length = int(sr * crop_seconds)
-    n_tracks = len(datamodule.test_dataset)
+    n_tracks = len(test_dataset)
     if max_tracks is not None:
         n_tracks = min(n_tracks, max_tracks)
     results = []
 
     for i in range(n_tracks):
-        sample = datamodule.test_dataset[i]
+        sample = test_dataset[i]
         mixture = sample["mixture"]
         vocals_true_t = sample["vocals"]
         vocals_true = vocals_true_t.numpy()

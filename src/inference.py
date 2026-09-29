@@ -1,6 +1,6 @@
 """
 Usage :
-    python -m src.separate CKPT INPUT.wav OUTPUT.wav [--crop-seconds 6.0]
+    python -m src.inference CKPT INPUT.wav OUTPUT.wav [--crop-seconds 6.0]
 """
 import math
 import argparse
@@ -18,7 +18,7 @@ def separate_full_track(
     module: VoiceSeparationModule,
     mixture: torch.Tensor,
     crop_length: int,
-    batch_size: int = 16,
+    batch_size: int,
     trainer: L.Trainer | None = None,
 ) -> torch.Tensor:
     if trainer is None:
@@ -64,6 +64,8 @@ if __name__ == "__main__":
     module = VoiceSeparationModule.load_from_checkpoint(args.ckpt, map_location="cpu")
 
     x, sr = sf.read(args.input, dtype="float32", always_2d=True)  # (T, C)
+    if sr != module.hparams.sr:
+        raise ValueError(f"The wav file is at {sr} but the model needs {module.hparams.sr}")
     mixture = torch.from_numpy(x.mean(axis=1))  # stereo -> mono
 
     voice = separate_full_track(module, mixture, int(sr * args.crop_seconds), args.batch_size)

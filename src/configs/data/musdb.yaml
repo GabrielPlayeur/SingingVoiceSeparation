@@ -5,6 +5,8 @@ batch_size: 8
 epoch_size: 500
 val_crops_per_track: 5
 val_size: 0.14
+silence_threshold: 1e-4
+max_retries: 10
 num_workers: 4
 random_seed: 42
 split_path: musdb18/split.json
