@@ -67,12 +67,18 @@ class VoiceSeparationModule(L.LightningModule):
 
         # SI-SDR par échantillon (B,) : la moyenne pondérée par batch_size donne la moyenne exacte sur les crops
         n = batch["vocals"].shape[0]
-        sisdr = scale_invariant_signal_distortion_ratio(voc_est_wave, batch["vocals"]).mean()
-        sisdr_mix = scale_invariant_signal_distortion_ratio(batch["mixture"], batch["vocals"]).mean()
+        sisdr = scale_invariant_signal_distortion_ratio(voc_est_wave, batch["vocals"])
+        sisdr_mean, sisdr_med = sisdr.mean(), sisdr.median()
+        sisdr_mix = scale_invariant_signal_distortion_ratio(batch["mixture"], batch["vocals"])
+        sisdr_mix_mean, sisdr_mix_med = sisdr_mix.mean(), sisdr_mix.median()
+        si_sdri_mean, si_sdri_med = sisdr_mean - sisdr_mix_mean, sisdr_med - sisdr_mix_med
         self.log("val/loss", loss, on_epoch=True, batch_size=n)
-        self.log("val/si_sdr", sisdr, on_epoch=True, batch_size=n)
-        self.log("val/si_sdr_mix", sisdr_mix, on_epoch=True, batch_size=n)
-        self.log("val/si_sdri", sisdr - sisdr_mix, on_epoch=True, batch_size=n)  # gain
+        self.log("val/si_sdr_mean", sisdr, on_epoch=True, batch_size=n)
+        self.log("val/si_sdr_mix_mean", sisdr_mix, on_epoch=True, batch_size=n)
+        self.log("val/si_sdri_mean", si_sdri_mean, on_epoch=True, batch_size=n)  # gain
+        self.log("val/si_sdr_median", sisdr, on_epoch=True, batch_size=n)
+        self.log("val/si_sdr_mix_median", sisdr_mix, on_epoch=True, batch_size=n)
+        self.log("val/si_sdri_median", si_sdri_med, on_epoch=True, batch_size=n)
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         voc_amp = self.forward(batch["mix_amp"]) * batch["mix_amp"]

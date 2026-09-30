@@ -27,17 +27,17 @@ def main(cfg: DictConfig):
         config=dict(cfg)
         )
 
-    logger.experiment.define_metric("val/si_sdr", summary="max")
-    logger.experiment.define_metric("val/si_sdri", summary="max")
+    logger.experiment.define_metric("val/si_sdr_median", summary="max")
+    logger.experiment.define_metric("val/si_sdri_median", summary="max")
 
     callbacks = [
         EarlyStopping(
-            monitor="val/si_sdr",
+            monitor="val/si_sdr_median",
             mode="max",
             patience=cfg.training.early_stopping_patience,
             min_delta=cfg.training.early_stopping_min_delta,
         ),
-        ModelCheckpoint(monitor="val/si_sdr", save_top_k=1, mode="max"),
+        ModelCheckpoint(monitor="val/si_sdr_median", save_top_k=1, mode="max"),
     ]
 
     trainer = L.Trainer(
