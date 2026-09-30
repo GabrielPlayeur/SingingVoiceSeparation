@@ -109,12 +109,6 @@ class MUSDB18DataModule(L.LightningDataModule):
             val_crops = self._build_val_crops(val_dirs)
             self.val_dataset = MUSDBFixedDataset(val_crops)
 
-        if stage == "test" or stage is None:
-            self.test_dataset = MUSDBFullTrackDataset(
-                track_dirs=self._get_track_dirs("test"),
-                sr=self.hparams.sr
-                )
-
     def train_dataloader(self) -> Any:
         return DataLoader(
             self.train_dataset,
@@ -128,14 +122,6 @@ class MUSDB18DataModule(L.LightningDataModule):
         return DataLoader(
             self.val_dataset,
             batch_size=self.hparams.batch_size,
-            shuffle=False,
-            num_workers=self.hparams.num_workers,
-        )
-
-    def test_dataloader(self) -> Any:
-        return DataLoader(
-            self.test_dataset,
-            batch_size=1,
             shuffle=False,
             num_workers=self.hparams.num_workers,
         )

@@ -24,7 +24,8 @@ def main(cfg: DictConfig):
         project="VoiceSeparation",
         entity="playeur-audio-team",
         name=cfg.get("wandb", {}).get("run_name", None),
-        config=dict(cfg)
+        config=dict(cfg),
+        save_dir=cfg.output_dir,
         )
 
     logger.experiment.define_metric("val/si_sdr_median", summary="max")
@@ -45,6 +46,7 @@ def main(cfg: DictConfig):
         callbacks=callbacks,
         logger=logger,
         log_every_n_steps=cfg.training.log_every_n_steps,
+        default_root_dir=cfg.output_dir,
     )
 
     trainer.fit(module, datamodule)

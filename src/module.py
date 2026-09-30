@@ -72,7 +72,7 @@ class VoiceSeparationModule(L.LightningModule):
         sisdr_mix = scale_invariant_signal_distortion_ratio(batch["mixture"], batch["vocals"])
         sisdr_mix_mean, sisdr_mix_med = sisdr_mix.mean(), sisdr_mix.median()
         si_sdri_mean, si_sdri_med = sisdr_mean - sisdr_mix_mean, sisdr_med - sisdr_mix_med
-        self.log("val/loss", loss, on_epoch=True, batch_size=n)
+        self.log("val/loss", loss, on_step=True, on_epoch=True, batch_size=n)
         self.log("val/si_sdr_mean", sisdr, on_epoch=True, batch_size=n)
         self.log("val/si_sdr_mix_mean", sisdr_mix, on_epoch=True, batch_size=n)
         self.log("val/si_sdri_mean", si_sdri_mean, on_epoch=True, batch_size=n)  # gain
