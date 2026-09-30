@@ -3,10 +3,12 @@ from omegaconf import DictConfig
 import lightning as L
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
+from omegaconf import OmegaConf
 
 from .data import MUSDB18DataModule
 from .module import VoiceSeparationModule
 from .evaluate import evaluate
+from .utils import assert_no_temporal_padding
 
 
 @hydra.main(version_base=None,
@@ -14,6 +16,8 @@ from .evaluate import evaluate
             config_name="config")
 def main(cfg: DictConfig):
     L.seed_everything(cfg.seed)
+
+    assert_no_temporal_padding(cfg.data.crop_length, cfg.model.hop_length, cfg.model.depth)
 
     datamodule = MUSDB18DataModule(**cfg.data)
 
@@ -24,7 +28,7 @@ def main(cfg: DictConfig):
         project="VoiceSeparation",
         entity="playeur-audio-team",
         name=cfg.get("wandb", {}).get("run_name", None),
-        config=dict(cfg),
+        config=OmegaConf.to_container(cfg, resolve=True),
         save_dir=cfg.output_dir,
         )
 
@@ -55,7 +59,7 @@ def main(cfg: DictConfig):
         evaluate(
             trainer.checkpoint_callback.best_model_path,
             dataset_path=cfg.data.dataset_path,
-            crop_seconds=cfg.data.crop_seconds,
+            crop_length=cfg.data.crop_length,
             logger=logger,
         )
 

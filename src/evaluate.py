@@ -14,11 +14,13 @@ from .data.data import list_track_dirs
 from .data.dataset import MUSDBFullTrackDataset
 from .module import VoiceSeparationModule
 from .inference import separate_full_track
+from .utils import assert_no_temporal_padding
 
 
-def evaluate(checkpoint_path, dataset_path, crop_seconds=6.0, batch_size=16, max_tracks=None, logger=None):
+def evaluate(checkpoint_path, dataset_path, crop_length=261632, batch_size=16, max_tracks=None, logger=None):
     module = VoiceSeparationModule.load_from_checkpoint(checkpoint_path, map_location="cpu")
     sr = module.hparams.sr
+    assert_no_temporal_padding(crop_length, module.hparams.hop_length, module.hparams.depth)
     trainer = Trainer( accelerator="auto",
                        devices=1,
                        logger=False,
@@ -28,7 +30,6 @@ def evaluate(checkpoint_path, dataset_path, crop_seconds=6.0, batch_size=16, max
 
     test_dataset = MUSDBFullTrackDataset(track_dirs=list_track_dirs(dataset_path, "test"), sr=sr)
 
-    crop_length = int(sr * crop_seconds)
     n_tracks = len(test_dataset)
     if max_tracks is not None:
         n_tracks = min(n_tracks, max_tracks)

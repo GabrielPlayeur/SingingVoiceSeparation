@@ -25,6 +25,7 @@ class VoiceSeparationModule(L.LightningModule):
             hop_length=self.hparams.hop_length,
             window=self.window,
             return_complex=True,
+            center=True,
         )
 
     def _to_wave(self, amp, phase, length):

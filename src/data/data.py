@@ -24,7 +24,7 @@ class MUSDB18DataModule(L.LightningDataModule):
         self,
         dataset_path: str,
         sr: int,
-        crop_seconds: float,
+        crop_length: int,
         batch_size: int,
         epoch_size: int,
         val_crops_per_track: int,
@@ -37,7 +37,7 @@ class MUSDB18DataModule(L.LightningDataModule):
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
-        self.crop_length = int(sr * crop_seconds)
+        self.crop_length = crop_length
 
     def _get_track_dirs(self, split="train"):
         return list_track_dirs(self.hparams.dataset_path, split)
@@ -50,7 +50,7 @@ class MUSDB18DataModule(L.LightningDataModule):
             # if the params have changed
             if (saved["params"]["val_size"] != self.hparams.val_size or 
                 saved["params"]["random_seed"] != self.hparams.random_seed or 
-                saved["params"]["dataset_path "] != self.hparams.dataset_path 
+                saved["params"]["dataset_path"] != self.hparams.dataset_path 
                 ):
                 return self._build_split(train_dirs)
             return saved["train"], saved["val"]
@@ -124,4 +124,5 @@ class MUSDB18DataModule(L.LightningDataModule):
             batch_size=self.hparams.batch_size,
             shuffle=False,
             num_workers=self.hparams.num_workers,
+            persistent_workers=self.hparams.num_workers > 0,
         )
