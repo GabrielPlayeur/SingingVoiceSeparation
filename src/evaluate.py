@@ -3,6 +3,7 @@ Usage :
     python -m src.evaluate CKPT [--dataset-path musdb18/processed]
 """
 import argparse
+import json
 
 import numpy as np
 import museval
@@ -17,7 +18,17 @@ from .inference import separate_full_track
 from .utils import assert_no_temporal_padding
 
 
-def evaluate(checkpoint_path, dataset_path, crop_length=261632, batch_size=16, max_tracks=None, logger=None):
+def bootstrap_ci(values, n_resamples=10_000, alpha=0.05, seed=0):
+    values = np.asarray(values, dtype=float)
+    values = values[~np.isnan(values)]
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(values), size=(n_resamples, len(values)))
+    medians = np.median(values[idx], axis=1)
+    lo, hi = np.quantile(medians, [alpha / 2, 1 - alpha / 2])
+    return float(np.median(values)), float(lo), float(hi)
+
+
+def evaluate(checkpoint_path, dataset_path, crop_length=261632, batch_size=16, max_tracks=None, logger=None, output_json=None):
     module = VoiceSeparationModule.load_from_checkpoint(checkpoint_path, map_location="cpu")
     sr = module.hparams.sr
     assert_no_temporal_padding(crop_length, module.hparams.hop_length, module.hparams.depth)
@@ -64,8 +75,15 @@ def evaluate(checkpoint_path, dataset_path, crop_length=261632, batch_size=16, m
 
     scores = np.array([r["sdr"] for r in results])
     si_sdri_scores = np.array([r["si_sdri"] for r in results])
-    print(f"\nSDR médian sur {len(scores)} morceaux : {np.nanmedian(scores):.2f} dB")
-    print(f"SI-SDRi médian sur {len(si_sdri_scores)} morceaux : {np.nanmedian(si_sdri_scores):.2f} dB")
+    sdr_med, sdr_lo, sdr_hi = bootstrap_ci(scores)
+    sisdri_med, sisdri_lo, sisdri_hi = bootstrap_ci(si_sdri_scores)
+    print(f"\nSDR médian sur {len(scores)} morceaux : {sdr_med:.2f} dB  IC95% bootstrap [{sdr_lo:.2f}, {sdr_hi:.2f}]")
+    print(f"SI-SDRi médian sur {len(si_sdri_scores)} morceaux : {sisdri_med:.2f} dB  IC95% bootstrap [{sisdri_lo:.2f}, {sisdri_hi:.2f}]")
+
+    if output_json is not None:
+        # scores par morceau, pour comparer deux modèles par test apparié (même morceaux)
+        with open(output_json, "w") as f:
+            json.dump(results, f, indent=2)
 
     if logger is not None:
         import wandb
@@ -79,6 +97,10 @@ def evaluate(checkpoint_path, dataset_path, crop_length=261632, batch_size=16, m
             "test/sdr_mean": float(np.nanmean(scores)),
             "test/si_sdri_median": float(np.nanmedian(si_sdri_scores)),
             "test/si_sdri_mean": float(np.nanmean(si_sdri_scores)),
+            "test/sdr_ci_low": sdr_lo,
+            "test/sdr_ci_high": sdr_hi,
+            "test/si_sdri_ci_low": sisdri_lo,
+            "test/si_sdri_ci_high": sisdri_hi,
         }
         run.log({**summary, "test/per_track": table})
         run.summary.update(summary)
@@ -91,5 +113,6 @@ if __name__ == "__main__":
     parser.add_argument("ckpt")
     parser.add_argument("--dataset-path", default="musdb18/processed")
     parser.add_argument("--max-tracks", type=int, default=None)
+    parser.add_argument("--output-json", default=None, help="écrit les scores par morceau")
     args = parser.parse_args()
-    evaluate(args.ckpt, args.dataset_path, max_tracks=args.max_tracks)
+    evaluate(args.ckpt, args.dataset_path, max_tracks=args.max_tracks, output_json=args.output_json)

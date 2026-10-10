@@ -59,6 +59,9 @@ class VoiceSeparationModule(L.LightningModule):
         self.log("train/loss", loss, on_step=False, on_epoch=True)
         return loss
 
+    def on_validation_epoch_start(self):
+        self._val_sisdr, self._val_sisdr_mix = [], []
+
     def validation_step(self, batch, batch_idx):
         mask = self.forward(batch["mix_amp"])
         voc_est_amp = mask * batch["mix_amp"]
@@ -66,20 +69,25 @@ class VoiceSeparationModule(L.LightningModule):
 
         voc_est_wave = self._to_wave(voc_est_amp, batch["mix_phase"], batch["vocals"].shape[-1])
 
+
         # SI-SDR par échantillon (B,) : la moyenne pondérée par batch_size donne la moyenne exacte sur les crops
         n = batch["vocals"].shape[0]
         sisdr = scale_invariant_signal_distortion_ratio(voc_est_wave, batch["vocals"])
-        sisdr_mean, sisdr_med = sisdr.mean(), sisdr.median()
         sisdr_mix = scale_invariant_signal_distortion_ratio(batch["mixture"], batch["vocals"])
-        sisdr_mix_mean, sisdr_mix_med = sisdr_mix.mean(), sisdr_mix.median()
-        si_sdri_mean, si_sdri_med = sisdr_mean - sisdr_mix_mean, sisdr_med - sisdr_mix_med
-        self.log("val/loss", loss, on_step=True, on_epoch=True, batch_size=n)
-        self.log("val/si_sdr_mean", sisdr, on_epoch=True, batch_size=n)
-        self.log("val/si_sdr_mix_mean", sisdr_mix, on_epoch=True, batch_size=n)
-        self.log("val/si_sdri_mean", si_sdri_mean, on_epoch=True, batch_size=n)  # gain
-        self.log("val/si_sdr_median", sisdr, on_epoch=True, batch_size=n)
-        self.log("val/si_sdr_mix_median", sisdr_mix, on_epoch=True, batch_size=n)
-        self.log("val/si_sdri_median", si_sdri_med, on_epoch=True, batch_size=n)
+
+        self._val_sisdr.append(sisdr.detach())
+        self._val_sisdr_mix.append(sisdr_mix.detach())
+        self.log("val/loss", loss, on_epoch=True, batch_size=n)  # seule métrique batchée
+
+    def on_validation_epoch_end(self):
+        s = torch.cat(self._val_sisdr)
+        m = torch.cat(self._val_sisdr_mix)
+        self.log("val/si_sdr_median", torch.quantile(s, 0.5))
+        self.log("val/si_sdr_mean", s.mean())
+        self.log("val/si_sdr_mix_median", torch.quantile(m, 0.5))
+        self.log("val/si_sdri_median", torch.quantile(s - m, 0.5))
+        self.log("val/si_sdri_mean", (s - m).mean())
+
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         voc_amp = self.forward(batch["mix_amp"]) * batch["mix_amp"]
