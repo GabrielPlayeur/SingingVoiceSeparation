@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import museval
 import torch
 from lightning.pytorch.callbacks import Callback
-from torchmetrics.functional.audio import scale_invariant_signal_distortion_ratio
+from .utils import si_sdr
 
 class Oracle:
     def __init__(self, n_fft, hop_length):
@@ -25,7 +25,7 @@ class Oracle:
 
         voc_est_amp = mix_amp * mask
         voc_est_stft = voc_est_amp * np.exp(1j * mix_phase)
-        voc_est = librosa.istft(voc_est_stft, hop_length=self.hop_length, length=len(mixture))
+        voc_est = librosa.istft(voc_est_stft, hop_length=self.hop_length, length=mixture.shape[-1])  # mixture : (T,) ou (C, T)
 
         return voc_est
 
@@ -40,7 +40,7 @@ class OracleValReference(Callback):
         for i in range(len(val_crops)):
             crop = val_crops[i]
             voc_est = self.oracle.evaluate(crop["mixture"].numpy(), crop["vocals"].numpy())
-            scores.append(scale_invariant_signal_distortion_ratio(torch.from_numpy(voc_est), crop["vocals"]))
+            scores.append(si_sdr(torch.from_numpy(voc_est), crop["vocals"]))
         self.value = torch.quantile(torch.stack(scores), 0.5).item()  # même médiane que le module
 
     def on_validation_epoch_end(self, trainer, pl_module):

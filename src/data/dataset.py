@@ -4,12 +4,20 @@ import soundfile as sf
 import torch
 from torch.utils.data import Dataset
 
-def read_crop(path, start, n_frames, sr: int):
+def read_crop(path, start, n_frames, sr: int, channels: int=1):
     """Lit un extrait d'un WAV sans charger le fichier entier."""
     x, track_sr = sf.read(path, start=start, frames=n_frames, dtype="float32", always_2d=True)
     if track_sr != sr:
         raise ValueError(f"The wav file {path} is at {track_sr} but the model needs {sr}")
-    return x.mean(axis=1)  # stéréo -> mono, shape (n_frames,)
+    return to_channels(x, channels)  # (channels, n_frames)
+
+def to_channels(x, channels: int):
+    """(n, 2) -> (channels, n) : mono = moyenne des deux canaux, stéréo = tel quel."""
+    if channels == 1:
+        x = x.mean(axis=1, keepdims=True)
+    elif channels != x.shape[1]:
+        raise ValueError(f"channels={channels} but the wav file has {x.shape[1]} channels")
+    return x.T
 
 class MUSDBTrainDataset(Dataset):
     def __init__(self,
@@ -19,6 +27,7 @@ class MUSDBTrainDataset(Dataset):
                  epoch_size: int,
                  silence_threshold: float,
                  max_retries: int,
+                 channels: int = 1,
                 ):
         super().__init__()
         self.track_dirs = track_dirs
@@ -27,6 +36,7 @@ class MUSDBTrainDataset(Dataset):
         self.epoch_size = epoch_size
         self.silence_threshold = silence_threshold
         self.max_retries = max_retries
+        self.channels = channels
 
         # on lit la durée de chaque morceau une seule fois, au démarrage
         self.track_lengths = []
@@ -46,8 +56,8 @@ class MUSDBTrainDataset(Dataset):
         max_start = self.track_lengths[idx] - self.crop_length
         start = np.random.randint(0, max_start)
 
-        vocals = read_crop(os.path.join(track_dir, "vocals.wav"), start, self.crop_length, self.sr)
-        accompaniment = read_crop(os.path.join(track_dir, "accompaniment.wav"), start, self.crop_length, self.sr)
+        vocals = read_crop(os.path.join(track_dir, "vocals.wav"), start, self.crop_length, self.sr, self.channels)
+        accompaniment = read_crop(os.path.join(track_dir, "accompaniment.wav"), start, self.crop_length, self.sr, self.channels)
         return vocals, accompaniment
 
     def __getitem__(self, index):
@@ -65,7 +75,6 @@ class MUSDBTrainDataset(Dataset):
             "mixture": torch.from_numpy(mixture).float(),
             "vocals": torch.from_numpy(vocals).float(),
         }
-
 
 class MUSDBFixedDataset(Dataset):
     def __init__(self, crops):
@@ -85,8 +94,9 @@ class MUSDBFixedDataset(Dataset):
 class MUSDBFullTrackDataset(Dataset):
     """Charge un morceau ENTIER, pour l'évaluation finale."""
 
-    def __init__(self, track_dirs, sr):
+    def __init__(self, track_dirs, sr, channels: int = 1):
         self.sr = sr
+        self.channels = channels
         self.track_dirs = track_dirs
 
     def __len__(self):
@@ -100,8 +110,8 @@ class MUSDBFullTrackDataset(Dataset):
         accompaniment, accompaniment_sr  = sf.read(os.path.join(track_dir, "accompaniment.wav"), dtype="float32", always_2d=True)
         if accompaniment_sr != self.sr:
             raise ValueError(f"The wav file {os.path.join(track_dir, 'accompaniment.wav')} is at {accompaniment_sr} but the model needs {self.sr}")
-        vocals = vocals.mean(axis=1) # stereo -> mono
-        accompaniment = accompaniment.mean(axis=1)
+        vocals = to_channels(vocals, self.channels)  # (channels, T)
+        accompaniment = to_channels(accompaniment, self.channels)
         return {
             "mixture": torch.from_numpy(vocals + accompaniment).float(),
             "vocals": torch.from_numpy(vocals).float(),

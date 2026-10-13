@@ -29,10 +29,10 @@ class DecoderBlock(nn.Module):
         return self.dropout(x)
 
 class UNet(nn.Module):
-    def __init__(self, base_channels: int, depth: int):
+    def __init__(self, base_channels: int, depth: int, in_channels: int = 1):
         super().__init__()
 
-        chs = [1] + [base_channels * 2**i for i in range(depth)]
+        chs = [in_channels] + [base_channels * 2**i for i in range(depth)]
         self.encoders = nn.ModuleList([
             EncoderBlock(chs[i], chs[i+1]) for i in range(depth)
         ])
@@ -46,7 +46,7 @@ class UNet(nn.Module):
             self.decoders.append(DecoderBlock(in_ch, out_ch, dropout=dropout, return_logit=return_logit))
 
         self.final = nn.Sequential(
-            nn.Conv2d(chs[0], 1, kernel_size=1),
+            nn.Conv2d(chs[0], in_channels, kernel_size=1),
             nn.Sigmoid(),
         )
 
@@ -70,8 +70,8 @@ class UNet(nn.Module):
         return self.final(x)[..., :H, :W]
 
 if __name__ == "__main__":
-    model = UNet(base_channels=16, depth=6)
-    dummy = torch.randn(2, 1, 512, 128)  # (batch, canal, fréquences, temps)
+    model = UNet(base_channels=16, depth=6, in_channels=2)
+    dummy = torch.randn(2, 2, 512, 128)  # (batch, canal, fréquences, temps)
     out = model(dummy)
     print(out.shape)
     print(out.min().item(), out.max().item())

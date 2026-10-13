@@ -12,13 +12,12 @@ import museval
 import torch
 from lightning import Trainer
 from tqdm import tqdm
-from torchmetrics.functional.audio import scale_invariant_signal_distortion_ratio
 
 from .data.data import list_track_dirs
 from .data.dataset import MUSDBFullTrackDataset
 from .module import VoiceSeparationModule
 from .inference import separate_full_track
-from .utils import assert_no_temporal_padding
+from .utils import assert_no_temporal_padding, si_sdr
 from .oracle import Oracle
 
 
@@ -33,17 +32,15 @@ def bootstrap_ci(values, n_resamples=10_000, alpha=0.05, seed=0):
 
 
 def median_sdr(vocals_true, accomp_true, vocals_est, accomp_est, sr):
-    references = np.stack([vocals_true, accomp_true])[..., np.newaxis]
-    estimates = np.stack([vocals_est, accomp_est])[..., np.newaxis]
+    # (C, T) -> (sources, samples, canaux)
+    references = np.stack([vocals_true, accomp_true]).transpose(0, 2, 1)
+    estimates = np.stack([vocals_est, accomp_est]).transpose(0, 2, 1)
     sdr, isr, sir, sar = museval.evaluate(references, estimates, win=sr, hop=sr) # 1sec
     return float(np.nanmedian(sdr[0]))
 
 
 def si_sdri(vocals_est_t, mixture_t, vocals_true_t):
-    return float(
-        scale_invariant_signal_distortion_ratio(vocals_est_t, vocals_true_t)
-        - scale_invariant_signal_distortion_ratio(mixture_t, vocals_true_t)
-    )
+    return float(si_sdr(vocals_est_t, vocals_true_t) - si_sdr(mixture_t, vocals_true_t))
 
 
 def evaluate(checkpoint_path, dataset_path, crop_length=261632, batch_size=16, max_tracks=None, logger=None, output_json=None, with_oracle=True):
@@ -60,7 +57,7 @@ def evaluate(checkpoint_path, dataset_path, crop_length=261632, batch_size=16, m
                      hop_length=module.hparams.hop_length
                     ) if with_oracle else None
 
-    test_dataset = MUSDBFullTrackDataset(track_dirs=list_track_dirs(dataset_path, "test"), sr=sr)
+    test_dataset = MUSDBFullTrackDataset(track_dirs=list_track_dirs(dataset_path, "test"), sr=sr, channels=module.hparams.in_channels)
 
     n_tracks = len(test_dataset)
     if max_tracks is not None:

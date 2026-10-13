@@ -1,9 +1,9 @@
 defaults:
+  - _self_
   - data: musdb
   - model: unet
   - training: default
   - optional experiment: null
-  - _self_
 
 # Valeurs globales
 seed: 42

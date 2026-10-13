@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
-from torchmetrics.functional.audio import scale_invariant_signal_distortion_ratio
 import lightning as L
 from .models.unet import UNet
+from .utils import si_sdr
 
 class VoiceSeparationModule(L.LightningModule):
     def __init__(self, 
@@ -12,31 +12,38 @@ class VoiceSeparationModule(L.LightningModule):
                  hop_length: int,
                  learning_rate: float,
                  sr: int,
+                 in_channels: int = 1,
                 ):
         super().__init__()
         self.save_hyperparameters()
-        self.model = UNet(base_channels=base_channels, depth=depth)
+        self.model = UNet(base_channels=base_channels, depth=depth, in_channels=in_channels)
         self.register_buffer("window", torch.hann_window(n_fft))
 
     def _stft(self, waveform):
-        return torch.stft(
-            waveform,
+        # (B, C, T) -> (B, C, F, T') ; torch.stft n'accepte que 1D/2D donc on aplatit les canaux
+        B, C, T = waveform.shape
+        spec = torch.stft(
+            waveform.reshape(B * C, T),
             n_fft=self.hparams.n_fft,
             hop_length=self.hparams.hop_length,
             window=self.window,
             return_complex=True,
             center=True,
         )
+        return spec.reshape(B, C, *spec.shape[-2:])
 
     def _to_wave(self, amp, phase, length):
-        # amplitude est + phase mix -> forme d'onde (B, length)
-        return torch.istft(
-            amp * torch.exp(1j * phase),
+        # amplitude est + phase mix -> forme d'onde (B, C, length)
+        spec = amp * torch.exp(1j * phase)
+        B, C = spec.shape[:2]
+        wave = torch.istft(
+            spec.reshape(B * C, *spec.shape[-2:]),
             n_fft=self.hparams.n_fft,
             hop_length=self.hparams.hop_length,
             window=self.window,
             length=length,
         )
+        return wave.reshape(B, C, length)
 
     def on_after_batch_transfer(self, batch, dataloader_idx):
         mix_stft = self._stft(batch["mixture"])
@@ -47,10 +54,8 @@ class VoiceSeparationModule(L.LightningModule):
         return batch
 
     def forward(self, mix_amp):
-        # mix_amp : (B, F, T) ->  (B, 1, F, T)
-        x = mix_amp.unsqueeze(1)
-        mask = self.model(x)
-        return mask.squeeze(1)
+        # mix_amp : (B, C, F, T) -> masque (B, C, F, T)
+        return self.model(mix_amp)
 
     def training_step(self, batch, batch_idx):
         mask = self.forward(batch["mix_amp"])
@@ -70,10 +75,10 @@ class VoiceSeparationModule(L.LightningModule):
         voc_est_wave = self._to_wave(voc_est_amp, batch["mix_phase"], batch["vocals"].shape[-1])
 
 
-        # SI-SDR par échantillon (B,) : la moyenne pondérée par batch_size donne la moyenne exacte sur les crops
+        # SI-SDR par échantillon (B,), moyenné sur les canaux : la moyenne pondérée par batch_size donne la moyenne exacte sur les crops
         n = batch["vocals"].shape[0]
-        sisdr = scale_invariant_signal_distortion_ratio(voc_est_wave, batch["vocals"])
-        sisdr_mix = scale_invariant_signal_distortion_ratio(batch["mixture"], batch["vocals"])
+        sisdr = si_sdr(voc_est_wave, batch["vocals"])
+        sisdr_mix = si_sdr(batch["mixture"], batch["vocals"])
 
         self._val_sisdr.append(sisdr.detach())
         self._val_sisdr_mix.append(sisdr_mix.detach())

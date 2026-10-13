@@ -23,6 +23,7 @@ class MUSDB18DataModule(L.LightningDataModule):
     def __init__(
         self,
         dataset_path: str,
+        channels: int,
         sr: int,
         crop_length: int,
         batch_size: int,
@@ -83,10 +84,10 @@ class MUSDB18DataModule(L.LightningDataModule):
             while kept < self.hparams.val_crops_per_track and tries < self.hparams.max_retries:
                 tries += 1
                 start = int(rng.integers(0, n_frames - self.crop_length))
-                vocals = read_crop(os.path.join(track_dir, "vocals.wav"), start, self.crop_length, sr=self.hparams.sr)
+                vocals = read_crop(os.path.join(track_dir, "vocals.wav"), start, self.crop_length, sr=self.hparams.sr, channels=self.hparams.channels)
                 if np.abs(vocals).mean() < self.hparams.silence_threshold:
                     continue
-                accompaniment = read_crop(os.path.join(track_dir, "accompaniment.wav"), start, self.crop_length, sr=self.hparams.sr)
+                accompaniment = read_crop(os.path.join(track_dir, "accompaniment.wav"), start, self.crop_length, sr=self.hparams.sr, channels=self.hparams.channels)
                 crops.append({"mixture": vocals + accompaniment, "vocals": vocals})
                 kept += 1
             if kept < self.hparams.val_crops_per_track:
@@ -105,6 +106,7 @@ class MUSDB18DataModule(L.LightningDataModule):
                 epoch_size=self.hparams.epoch_size,
                 silence_threshold=self.hparams.silence_threshold,
                 max_retries=self.hparams.max_retries,
+                channels=self.hparams.channels,
             )
             val_crops = self._build_val_crops(val_dirs)
             self.val_dataset = MUSDBFixedDataset(val_crops)

@@ -5,6 +5,14 @@ Usage :
 
 import argparse
 
+import torch
+from torchmetrics.functional.audio import scale_invariant_signal_distortion_ratio
+
+
+def si_sdr(estimate: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """SI-SDR de signaux (B, C, T) ou (C, T), moyenné sur les canaux -> (B,) ou scalaire."""
+    return scale_invariant_signal_distortion_ratio(estimate, target).mean(dim=-1)
+
 def compute_crop_length(sr: int, hop_length: int, depth: int, target_seconds: float) -> int:
     """Longueur de crop (en échantillons) la plus proche de target_seconds telle que le
     nombre de trames STFT soit un multiple de 2**depth : aucun padding temporel dans le

@@ -1,0 +1,5 @@
+# @package _global_
+data:
+  channels: 2
+wandb:
+  run_name: unet-stereo
