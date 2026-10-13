@@ -9,6 +9,7 @@ from .data import MUSDB18DataModule
 from .module import VoiceSeparationModule
 from .evaluate import evaluate
 from .utils import assert_no_temporal_padding
+from .oracle import OracleValReference
 
 
 @hydra.main(version_base=None,
@@ -43,6 +44,7 @@ def main(cfg: DictConfig):
             min_delta=cfg.training.early_stopping_min_delta,
         ),
         ModelCheckpoint(monitor="val/si_sdr_median", save_top_k=1, mode="max"),
+        OracleValReference(n_fft=cfg.model.n_fft, hop_length=cfg.model.hop_length),
     ]
 
     trainer = L.Trainer(
