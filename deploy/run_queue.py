@@ -179,6 +179,9 @@ def run_job(job, ctx):
     job.meta["checkpoint"] = ckpt
     if ckpt:
         job.meta["wandb_run_id"] = Path(ckpt).parents[1].name  # outputs/VoiceSeparation/<id>/checkpoints/x.ckpt
+        slim = job.rundir / "checkpoint_slim.ckpt"  # poids seuls (~39 Mo) : transférable ; non bloquant
+        if not slim.exists():
+            subprocess.run([py, str(DEPLOY_DIR / "slim_ckpt.py"), ckpt, str(slim)], capture_output=True)
     save_meta(job)
 
     # --- évaluation
