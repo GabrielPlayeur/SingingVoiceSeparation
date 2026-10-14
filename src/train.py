@@ -8,8 +8,8 @@ from omegaconf import OmegaConf
 from .data import MUSDB18DataModule
 from .module import VoiceSeparationModule
 from .evaluate import evaluate
-from .utils import assert_no_temporal_padding
-from .oracle import OracleValReference
+from .utils.utils import assert_no_temporal_padding
+from .models.oracle import OracleValReference
 
 
 @hydra.main(version_base=None,

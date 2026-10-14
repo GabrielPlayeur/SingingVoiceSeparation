@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 
 from .module import VoiceSeparationModule
 from .data.dataset import to_channels
-from .utils import assert_no_temporal_padding
+from .utils.utils import assert_no_temporal_padding
 
 
 def separate_full_track(

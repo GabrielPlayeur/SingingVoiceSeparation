@@ -1,6 +1,6 @@
 """
 Usage :
-    python -m src.utils SR HOP DEPTH TARGET_SECONDS
+    python -m src.utils.utils SR HOP DEPTH TARGET_SECONDS
 """
 
 import argparse

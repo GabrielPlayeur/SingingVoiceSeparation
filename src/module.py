@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import lightning as L
 from .models.unet import UNet
-from .utils import si_sdr
+from .utils.utils import si_sdr
 
 class VoiceSeparationModule(L.LightningModule):
     def __init__(self, 
