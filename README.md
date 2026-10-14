@@ -172,11 +172,35 @@ Pourquoi ces valeurs : 3e-4 est le tiers de la valeur actuelle et proche du meil
 - Apres les experiences de loss, la meilleure loss sera rejouee avec le lr voisin (×3 et ÷3) pour verifier qu'il n'y a pas d'interaction lr-loss.
 
 ```
-python -m analysis.lr_schedule --run stereo=fgvzjxua --run lr3e4=<id W&B> --run cosine=<id> --run lr3e4_cosine=<id>
+python -m analysis.lr_schedule --run stereo=fgvzjxua --run cosine=543aaoll \
+    --run lr3e4=<run-id.wandb> --run lr3e4_cosine=<run-id.wandb> --run lr1e4=<run-id.wandb>
 ```
-(l'id est le nom du dossier `outputs/VoiceSeparation/<id>/` ; sortie : `figures/lr_schedule.png`.)
+(un id W&B est le nom du dossier `outputs/VoiceSeparation/<id>/` ; un run du serveur non synchronise se lit depuis son fichier `outputs/wandb/offline-run-*/run-<id>.wandb`, lu en local sans rien envoyer ; sortie : `figures/lr_schedule.png` et `figures/lr_schedule.json`.)
 
-Attendu (⚠ estimation, pas une mesure) : un gain modeste de SI-SDR de validation et surtout une courbe moins bruitee ; l'ordre de grandeur n'est pas sourcee. Si l'hypothese est infirmee (aucun reglage ne depasse le bruit), 1e-3 constant est conserve et l'on sait que le lr n'est pas un facteur limitant a ce budget. Resultat : [TODO]{entrainer 3 a 4 runs, comparer avec analysis.lr_schedule}.
+Attendu (⚠ estimation, pas une mesure) : un gain modeste de SI-SDR de validation et surtout une courbe moins bruitee ; l'ordre de grandeur n'est pas sourcee. Si l'hypothese est infirmee (aucun reglage ne depasse le bruit), 1e-3 constant est conserve et l'on sait que le lr n'est pas un facteur limitant a ce budget. 
+
+Resultat (mesure, une graine : 42 ; les 3 runs lr3e4, lr3e4_cosine et lr1e4 ont ete entraines sur un serveur GPU loue, la baseline et `cosine` en local ; meme code, memes donnees, meme split) :
+
+![optimisation du lr et du scheduler](figures/lr_schedule.png)
+
+| config | lr | scheduler | epoques | moyenne des 10 dernieres epoques (validation, SI-SDR median) | meilleure epoque (val.) |
+|---|---|---|---|---|---|
+| **baseline** | **1e-3** | **constant** | 150 | **3,95 ± 0,08 dB** | 4,14 dB (ep. 134) |
+| cosine | 1e-3 | cosinus | 150 | 3,80 ± 0,03 dB | 3,88 dB (ep. 127) |
+| lr3e4 | 3e-4 | constant | 150 | 3,73 ± 0,05 dB | 3,84 dB (ep. 138) |
+| lr3e4_cosine | 3e-4 | cosinus | 150 | 3,47 ± 0,03 dB | 3,56 dB (ep. 110) |
+| lr1e4 | 1e-4 | constant | 129 (arret anticipe) | 3,28 ± 0,11 dB | 3,46 dB (ep. 98) |
+
+(± = ecart-type sur les 10 dernieres epoques, ordre de grandeur du bruit d'un run ; `lr1e4` s'est arrete a l'epoque 129 par arret anticipe, patience 30 apres la meilleure epoque 98 : ses 10 dernieres epoques sont donc celles d'avant l'arret, et la courbe montait encore lentement.)
+
+Test (50 morceaux, **non utilise pour choisir**, donne pour memoire) : SDR median 4,31 dB (lr3e4), 4,36 dB (lr3e4_cosine), 4,05 dB (lr1e4), contre 4,50 dB pour la baseline ; SI-SDRi median 9,23 / 8,90 / 8,55 dB. Sur le test, `lr3e4_cosine` depasse `lr3e4` en SDR (+0,05 dB) mais pas en SI-SDRi (−0,33 dB), alors que la validation (SI-SDR) les classe dans l'ordre inverse : ces deux runs ne se departagent pas de facon robuste sur le SDR, ce qui n'a pas d'incidence sur la decision.
+
+**Lecture.**
+- **Hypothese infirmee : aucun reglage ne bat 1e-3 constant.** La baseline depasse chacun des quatre autres de 0,15 a 0,68 dB, soit 2 a 8 fois le bruit mesure (0,08 dB pour la baseline). Sur la validation, l'ordre est le meme que sur le test pour la baseline contre les trois runs du serveur. Decision (regle du protocole) : **on garde `learning_rate = 1e-3` constant**, `unet.yaml` et `training/default.yaml` ne changent pas, et la baseline des sections 3 et 4 reste celle de la section « Passage de Mono a Stereo » (SDR 4,50 dB). Le lr n'est pas un facteur limitant a ce budget de 150 epoques, dans la plage 1e-4 a 1e-3.
+- **Pour les lr constants, plus le lr est haut, meilleur est le resultat** (1e-4 < 3e-4 < 1e-3) : coherent avec une baseline **sous-entrainee** (la courbe monte encore a l'epoque 150), pas avec une oscillation due a un lr trop eleve. Un lr plus bas ralentit la convergence sans la stabiliser assez pour compenser dans 150 epoques.
+- **Le cosinus n'aide pas non plus** : a 1e-3 il perd 0,15 dB, a 3e-4 il perd 0,26 dB par rapport au meme lr constant. En revanche il reduit bien le bruit (ecart-type 0,03 dB contre 0,05 a 0,08 dB), ce qui est son seul avantage ici : mais le bruit d'un run n'est pas ce qui limitait la comparaison. ⚠ Hypothese non testee : decroitre le lr jusqu'a 0 coupe l'apprentissage pendant que le modele sous-entraine progresse encore ; avec plus d'epoques, le cosinus pourrait rattraper.
+- **Les deux machines donnent presque le meme resultat.** Le run `lr3e4_cosine` a ete entraine deux fois (serveur et local, meme graine) : 3,47 ± 0,03 dB et 3,52 ± 0,02 dB, soit 0,05 dB d'ecart. C'est une seule paire, donc un ordre de grandeur et non une mesure fiable de la variabilite entre machines, mais cela indique que passer au serveur ne decale pas les resultats de l'ordre des effets ci-dessus.
+- **Limites.** Une seule graine par config : l'ecart-type utilise est celui des epoques d'un run, pas celui entre graines (voir `docs/ROADMAP.md`, etape 0) ; les ecarts de 0,15 a 0,22 dB (cosine, lr3e4) sont au-dessus du bruit d'epoque mais pas prouves au-dessus de la variabilite entre graines. Le choix du lr 1e-3 n'en depend pas (c'est la valeur deja utilisee), mais la conclusion « le cosinus ne fait rien » est plus fragile que « 1e-4 et 3e-4 + cosinus sont moins bons ». Grille limitee a des lr ≤ 1e-3 : ⚠ la tendance monotone suggere qu'un lr plus haut (3e-3) ou plus d'epoques pourrait faire mieux ; non teste, hors du perimetre de cette etape.
 
 **References**
 - I. Loshchilov, F. Hutter, *SGDR: Stochastic Gradient Descent with Warm Restarts*, ICLR 2017, arXiv:1608.03983 ([arXiv](https://arxiv.org/abs/1608.03983)). Lu pour l'equation 5 et le cadre experimental.
@@ -184,7 +208,7 @@ Attendu (⚠ estimation, pas une mesure) : un gain modeste de SI-SDR de validati
 
 ### 3. Compression de l'amplitude (loi de puissance)
 
-**A lancer apres la section 2** : la baseline de comparaison est celle retenue par l'optimisation du lr et du scheduler (section 2), pas forcement celle de la section « Passage de Mono a Stereo ». Les resultats chiffres ci-dessous pour la baseline (SDR 4,50 dB, etc.) sont ceux du reglage initial (lr 1e-3 constant).
+**A lancer apres la section 2** : la baseline de comparaison est celle retenue par l'optimisation du lr et du scheduler (section 2), qui conserve le reglage initial (lr 1e-3 constant) : les resultats chiffres pour la baseline (SDR 4,50 dB, etc.) restent donc valables. La baseline est tout de meme relancee sur le serveur avec les runs de cette experience pour comparer sur la meme machine.
 
 **Hypothese.** Le reseau recoit |X| brut, sans normalisation, et la loss L1 est dominee par les bins forts (graves, passages forts). Comprimer l'amplitude par une loi de puissance `|X|^c`, `0 < c < 1`, devrait donner plus de poids aux bins faibles (aigus de la voix, sibilantes) et reduire la dependance au niveau sonore du morceau.
 
@@ -252,7 +276,7 @@ Attendu (⚠ estimations, pas des mesures) : gain de SDR modeste (moins de 0,5 d
 
 ### 4. Changement de la loss
 
-**A lancer apres la section 2** : la baseline de comparaison est celle retenue par l'optimisation du lr et du scheduler (section 2), pas forcement celle de la section « Passage de Mono a Stereo ». Les resultats chiffres ci-dessous pour la baseline (SDR 4,50 dB, etc.) sont ceux du reglage initial (lr 1e-3 constant).
+**A lancer apres la section 2** : la baseline de comparaison est celle retenue par l'optimisation du lr et du scheduler (section 2), qui conserve le reglage initial (lr 1e-3 constant) : les resultats chiffres pour la baseline (SDR 4,50 dB, etc.) restent donc valables. La baseline est tout de meme relancee sur le serveur avec les runs de cette experience pour comparer sur la meme machine.
 
 **Hypothese.** La loss de la baseline (L1 sur l'amplitude) n'est pas ce que l'on mesure. L'evaluation compare des *formes d'onde*, obtenues apres iSTFT avec la phase du melange ; la loss ne regarde que l'amplitude avant reconstruction, et ignore donc l'effet de la phase du melange et de l'iSTFT (la STFT modifiee n'est plus forcement coherente). Entrainer directement sur la forme d'onde reconstruite (`_to_wave`, deja differentiable) devrait rapprocher l'optimisation du SDR/SI-SDR evalue.
 

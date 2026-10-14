@@ -7,11 +7,14 @@ distinguent pas (une seule graine par run).
 
 Usage : python -m analysis.lr_schedule --run stereo=fgvzjxua --run lr3e4=<id W&B> --run cosine=<id> --run lr3e4_cosine=<id>
 L'id est celui du dossier outputs/VoiceSeparation/<id>/ (ou de l'URL du run W&B). Sans --run : la baseline seule.
+Un run du serveur jamais synchronisé (W&B hors ligne) se lit directement depuis son fichier : --run lr3e4=chemin/run-<id>.wandb
+(lecture locale du journal binaire W&B, rien n'est envoyé).
 Sorties : figures/lr_schedule.png, figures/lr_schedule.json
 """
 import argparse
 import json
 import os
+import struct
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -24,7 +27,50 @@ LAST = 10  # nombre d'époques du critère de choix
 COLORS = [BLUE, ORANGE, AQUA, INK_2, "#8a5fd1"]
 
 
+def _wandb_records(path):
+    """Enregistrements protobuf d'un journal W&B hors ligne (format LevelDB : en-tête de 7 octets, blocs de 32 768 octets,
+    chaque enregistrement précédé de crc(4) + longueur(2) + type(1) ; 1 = complet, 2/3/4 = début/milieu/fin)."""
+    data = open(path, "rb").read()
+    block, pos, buf = 32768, 7, b""
+    while pos < len(data):
+        if block - pos % block < 7:
+            pos += block - pos % block
+            continue
+        _, length, kind = struct.unpack("<IHB", data[pos:pos + 7])
+        pos += 7
+        if kind == 0 and length == 0:
+            pos += (block - pos % block) % block
+            continue
+        chunk = data[pos:pos + length]
+        pos += length
+        if kind == 1:
+            yield chunk
+        elif kind == 2:
+            buf = chunk
+        elif kind == 3:
+            buf += chunk
+        elif kind == 4:
+            yield buf + chunk
+            buf = b""
+
+
+def load_offline(path):
+    from wandb.proto import wandb_internal_pb2 as pb
+    rows = {}
+    for raw in _wandb_records(path):
+        rec = pb.Record()
+        rec.ParseFromString(raw)
+        if rec.WhichOneof("record_type") == "history":
+            h = {i.key or "/".join(i.nested_key): json.loads(i.value_json) for i in rec.history.item}
+            if METRIC in h and "epoch" in h:
+                rows[int(h["epoch"])] = h[METRIC]
+    epochs = sorted(rows)
+    return os.path.basename(path), np.array(epochs), np.array([rows[e] for e in epochs])
+
+
 def load_history(run_id):
+    if run_id.endswith(".wandb"):
+        return load_offline(run_id)
     import wandb
     run = wandb.Api(timeout=30).run(f"{PROJECT}/{run_id}")
     h = run.history(keys=[METRIC, "epoch"], pandas=True, samples=5000).dropna(subset=[METRIC])
@@ -63,7 +109,7 @@ def main():
             noise = max(results[best]["last_std"], results[n]["last_std"])
             print(f"  {best} - {n} : {gap:.2f} dB (bruit {noise:.2f} dB) -> {'écart au-dessus du bruit' if gap > noise else 'non distinguable'}")
 
-    fig, ax = plt.subplots(figsize=(9, 4.6), constrained_layout=True)
+    fig, (ax, bx) = plt.subplots(1, 2, figsize=(12, 4.6), constrained_layout=True, gridspec_kw={"width_ratios": [2.2, 1]})
     for i, (name, (epochs, y)) in enumerate(curves.items()):
         c = COLORS[i % len(COLORS)]
         ax.plot(epochs, y, color=c, alpha=0.25, linewidth=1)
@@ -72,8 +118,21 @@ def main():
         ax.plot(epochs[k - 1:], smooth, color=c, linewidth=2, label=f"{name} (fin : {results[name]['last_mean']:.2f} dB)")
     ax.set_xlabel("époque")
     ax.set_ylabel("val/si_sdr_median (dB)")
-    ax.set_title(f"Optimisation de la baseline (trait fin : valeur par époque, trait épais : moyenne glissante sur {LAST})")
+    ax.set_title(f"Validation par époque (trait fin : brut, épais : moyenne glissante sur {LAST})")
+    ax.set_ylim(2.0, 4.3)  # les premières époques (de -4 à 2 dB) écrasent l’échelle ; la comparaison se joue au-dessus de 2 dB
     ax.legend(loc="lower right")
+
+    order = sorted(results, key=lambda n: results[n]["last_mean"])
+    pos = np.arange(len(order))
+    bx.barh(pos, [results[n]["last_mean"] for n in order], xerr=[results[n]["last_std"] for n in order],
+            color=[COLORS[list(curves).index(n) % len(COLORS)] for n in order], error_kw={"ecolor": INK_2, "capsize": 3})
+    for p_, n in zip(pos, order):
+        bx.text(results[n]["last_mean"] + results[n]["last_std"] + 0.03, p_, f"{results[n]['last_mean']:.2f}", va="center", fontsize=9)
+    bx.set_yticks(pos, order)
+    bx.set_xlim(min(results[n]["last_mean"] for n in order) - 0.4, max(results[n]["last_mean"] for n in order) + 0.35)
+    bx.set_xlabel(f"moyenne des {LAST} dernières époques ± écart-type (dB)")
+    bx.set_title("Critère de choix")
+    bx.grid(axis="y", visible=False)
     save(fig, "lr_schedule.png")
     with open(os.path.join(FIG_DIR, "lr_schedule.json"), "w") as f:
         json.dump(results, f, indent=2)

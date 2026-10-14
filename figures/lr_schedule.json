@@ -8,5 +8,45 @@
     "final": 4.037295818328857,
     "epoch_to_epoch_std": 0.3221468337773482,
     "wandb_run": "fgvzjxua"
+  },
+  "cosine": {
+    "epochs": 150,
+    "best": 3.8778929710388184,
+    "best_epoch": 127,
+    "last_mean": 3.804724860191345,
+    "last_std": 0.02764884686223985,
+    "final": 3.7737526893615723,
+    "epoch_to_epoch_std": 0.5493250690770451,
+    "wandb_run": "543aaoll"
+  },
+  "lr3e4": {
+    "epochs": 150,
+    "best": 3.839616298675537,
+    "best_epoch": 138,
+    "last_mean": 3.72881076335907,
+    "last_std": 0.05261254068186025,
+    "final": 3.7331175804138184,
+    "epoch_to_epoch_std": 0.3261449439749733,
+    "wandb_run": "outputs/server/lr-v4/lr3e4_s42/outputs/wandb/offline-run-20261014_165652-6ly60kbk/run-6ly60kbk.wandb"
+  },
+  "lr3e4_cosine": {
+    "epochs": 150,
+    "best": 3.559077739715576,
+    "best_epoch": 110,
+    "last_mean": 3.470975089073181,
+    "last_std": 0.027609834357532927,
+    "final": 3.446049690246582,
+    "epoch_to_epoch_std": 0.33626523011233267,
+    "wandb_run": "outputs/server/lr-v4/lr3e4_cosine_s42/outputs/wandb/offline-run-20261014_165652-tzmcyg7i/run-tzmcyg7i.wandb"
+  },
+  "lr1e4": {
+    "epochs": 129,
+    "best": 3.4574570655822754,
+    "best_epoch": 98,
+    "last_mean": 3.2766008377075195,
+    "last_std": 0.11053707289597507,
+    "final": 3.3444154262542725,
+    "epoch_to_epoch_std": 0.31877300325144026,
+    "wandb_run": "outputs/server/lr-v4/lr1e4_s42/outputs/wandb/offline-run-20261014_165652-tu8jv2lw/run-tu8jv2lw.wandb"
   }
 }
