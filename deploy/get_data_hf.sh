@@ -8,6 +8,8 @@ require_var HF_REPO
 [ -n "${HF_TOKEN:-}" ] || die "HF_TOKEN absent : read -rs HF_TOKEN; export HF_TOKEN (jeton en lecture)"
 # huggingface_hub s'installe AVANT l'accélérateur (le proxy ralentit pip)
 "$PYTHON_BIN" -c "import huggingface_hub" 2>/dev/null || { log "installation de huggingface_hub (miroir pip de l'image)"; "$PYTHON_BIN" -m pip install -q huggingface_hub 2>/dev/null || uv pip install -q --python "$PYTHON_BIN" huggingface_hub --index-url "${PYPI_MIRROR:-https://pypi.org/simple/}"; }
+# Xet (défaut des versions récentes de huggingface_hub) passe par un CDN que le proxy AutoDL ne couvre pas : "error sending request" (mesuré).
+export HF_HUB_DISABLE_XET=1
 enable_net_turbo
 mkdir -p "$MUSDB_RAW"
 log "téléchargement de hf.co/datasets/$HF_REPO vers $MUSDB_RAW (relancer pour reprendre)"
