@@ -131,7 +131,60 @@ Pour que la comparaison soit juste, les deux modeles ont ete evalues sur les 50 
 - **Precautions** : une seule graine par configuration (on ne connait pas la variabilite entre deux entrainements, voir `docs/ROADMAP.md`, etape 0), donc des differences de l'ordre de 0,1 a 0,3 dB ne sont pas interpretables. Les intervalles ne mesurent que la variabilite entre morceaux.
 - **Decision : on ne travaille plus qu'en stereo.** Le modele stereo est la nouvelle baseline (SDR median 4,50 dB, oracle 9,09 dB, ecart a l'oracle 4,59 dB) et `src.evaluate` n'evalue plus qu'en stereo (2 canaux, SDR BSSEval sur 2 canaux, protocole de la litterature). Comme il n'y a plus de comparaison mono / stereo a faire, l'evaluation est deux fois moins longue. Les chiffres restent non comparables a ceux des papiers (MUSDB18 compresse, melange reconstruit, SDR sur fenetres de 1 s). Comparaison de deux checkpoints : `python -m analysis.compare_runs outputs/eval_stereo.json outputs/eval_<nom>.json`.
 
-### 2. Compression de l'amplitude (loi de puissance)
+### 2. Optimisation de la baseline (learning rate et scheduler)
+
+**A faire avant les experiences 3 et 4 (compression, loss).** Toutes se comparent a la baseline stereo ; si celle-ci est mal reglee, chaque conclusion n'est valable qu'a ce reglage, et le bruit de mesure (ci-dessous) est du meme ordre que les effets attendus. On cherche donc d'abord un learning rate et un scheduler fiables, sur la baseline seule, puis on les fige pour toutes les experiences suivantes.
+
+**Pourquoi le reglage actuel est suspect.**
+- `learning_rate = 1e-3` constant n'est **pas sourcee** : c'est le defaut d'Adam, et Jansson et al. 2017 ne donnent pas de valeur (« trained using the ADAM optimizer »).
+- Les etudes qui donnent un lr utilisent des valeurs plus basses, mais sur d'autres architectures (reseaux recurrents, GAN) et optimiseurs, donc elles ne se transferent pas telles quelles :
+
+| etude | optimiseur | learning rate |
+|---|---|---|
+| Braun & Tashev (parole, GRU) | AdamW | 1e-4 |
+| Wilson et al. (parole, BLSTM) | non precise | 2,1e-4 (meilleure valeur d'une recherche Vizier sur 3e-6 a 1e-3) |
+| Yamamoto et al. (vocodeur GAN) | RAdam | 1e-4 (divise par 2 tous les 200 000 pas) |
+| Choi et al. | non donne dans le texte | non donne |
+| **ici** | Adam | **1e-3, constant** |
+
+- **Ce que montre le run de la baseline stereo** (historique W&B, mesure) : meilleur checkpoint a l'epoque 134 sur 150 (`max_epochs`) : l'arret anticipe n'a pas coupe le run, c'est le plafond d'epoques. La courbe monte encore (3,74 dB sur les epoques 100-110, 3,95 dB sur 140-150, pente d'environ +0,6 dB par 100 epoques) : **le modele est sous-entraine**. Le bruit est important : l'ecart-type de la difference entre deux epoques consecutives est de 0,32 dB, et le maximum (4,14 dB, qui sert de checkpoint) depasse la moyenne des 10 dernieres epoques (3,95 ± 0,08 dB) de 0,2 dB environ. Un lr constant a 1e-3 est une cause possible de cette oscillation (⚠ hypothese, non testee : la BatchNorm ou la petite validation en sont d'autres).
+
+**Hypothese.** Un lr plus bas et/ou une decroissance du lr dans le budget de 150 epoques donnent une courbe plus stable et un meilleur modele final, donc des comparaisons suivantes moins bruitees.
+
+**Scheduler.** Decroissance en cosinus **sans redemarrage** : `η_t = η_max/2 · (1 + cos(π t / T))`, `η_min = 0`, mise a jour a chaque pas, `T` = nombre total de pas (150 epoques × 63 pas). C'est l'equation 5 de Loshchilov & Hutter (SGDR, ICLR 2017) avec un seul cycle ; le papier propose des redemarrages et les evalue sur de la classification d'images (CIFAR, EEG, ImageNet reduit), pas sur de l'audio : on n'en reprend que la decroissance. Le cosinus de la config a ete verifie contre la formule (ecart 1e-19). Pas de phase de chauffe : la baseline a 1e-3 demarre sans instabilite visible (⚠). L'arret anticipe est **desactive** pour ces runs (il couperait la decroissance avant sa fin) : tous durent 150 epoques.
+
+**Experiences** (baseline stereo, loss L1 d'amplitude, memes donnees, graine et budget ; seuls le lr et le scheduler changent) :
+
+| config | learning rate | scheduler | commande |
+|---|---|---|---|
+| baseline (deja faite, run `fgvzjxua`) | 1e-3 | constant | `experiment=stereo` |
+| lr3e4 | 3e-4 | constant | `uv run python -m src.train experiment=stereo_lr3e4` |
+| cosine | 1e-3 | cosinus | `uv run python -m src.train experiment=stereo_cosine` |
+| lr3e4_cosine | 3e-4 | cosinus | `uv run python -m src.train experiment=stereo_lr3e4_cosine` |
+| lr1e4 (optionnel) | 1e-4 | constant | `uv run python -m src.train experiment=stereo_lr1e4` |
+
+Pourquoi ces valeurs : 3e-4 est le tiers de la valeur actuelle et proche du meilleur lr de Wilson (2,1e-4) ; 1e-4 est la valeur de Braun et de Yamamoto, optionnelle car probablement trop lente a 150 epoques. Un facteur 3 est un pas usuel de recherche, pas une valeur sourcee.
+
+**Protocole de decision.**
+- Choix sur la **validation uniquement**, jamais sur le test (sinon le test n'est plus independant pour les experiences suivantes).
+- Critere : **moyenne de `val/si_sdr_median` sur les 10 dernieres epoques** (pas le maximum, qui recompense une epoque chanceuse). L'ecart-type sur ces 10 epoques donne l'ordre de grandeur du bruit : en dessous, deux runs ne se distinguent pas (une seule graine par run).
+- Si un reglage gagne, il est ecrit dans `src/configs/model/unet.yaml` (et `training/default.yaml` pour l'arret anticipe) pour que **toutes** les experiences suivantes en heritent, et la baseline est relancee avec (`experiment=stereo`) : elle remplace alors celle de la section « Passage de Mono a Stereo » (SDR 4,50 dB) comme reference. Sinon on garde 1e-3 constant, en precisant que les conclusions sont valables a ce reglage.
+- Apres les experiences de loss, la meilleure loss sera rejouee avec le lr voisin (×3 et ÷3) pour verifier qu'il n'y a pas d'interaction lr-loss.
+
+```
+python -m analysis.lr_schedule --run stereo=fgvzjxua --run lr3e4=<id W&B> --run cosine=<id> --run lr3e4_cosine=<id>
+```
+(l'id est le nom du dossier `outputs/VoiceSeparation/<id>/` ; sortie : `figures/lr_schedule.png`.)
+
+Attendu (⚠ estimation, pas une mesure) : un gain modeste de SI-SDR de validation et surtout une courbe moins bruitee ; l'ordre de grandeur n'est pas sourcee. Si l'hypothese est infirmee (aucun reglage ne depasse le bruit), 1e-3 constant est conserve et l'on sait que le lr n'est pas un facteur limitant a ce budget. Resultat : [TODO]{entrainer 3 a 4 runs, comparer avec analysis.lr_schedule}.
+
+**References**
+- I. Loshchilov, F. Hutter, *SGDR: Stochastic Gradient Descent with Warm Restarts*, ICLR 2017, arXiv:1608.03983 ([arXiv](https://arxiv.org/abs/1608.03983)). Lu pour l'equation 5 et le cadre experimental.
+- Valeurs de lr des etudes : Braun & Tashev, Wilson et al., Yamamoto et al. (references plus bas), lues dans leurs sections d'entrainement.
+
+### 3. Compression de l'amplitude (loi de puissance)
+
+**A lancer apres la section 2** : la baseline de comparaison est celle retenue par l'optimisation du lr et du scheduler (section 2), pas forcement celle de la section « Passage de Mono a Stereo ». Les resultats chiffres ci-dessous pour la baseline (SDR 4,50 dB, etc.) sont ceux du reglage initial (lr 1e-3 constant).
 
 **Hypothese.** Le reseau recoit |X| brut, sans normalisation, et la loss L1 est dominee par les bins forts (graves, passages forts). Comprimer l'amplitude par une loi de puissance `|X|^c`, `0 < c < 1`, devrait donner plus de poids aux bins faibles (aigus de la voix, sibilantes) et reduire la dependance au niveau sonore du morceau.
 
@@ -197,7 +250,9 @@ Attendu (⚠ estimations, pas des mesures) : gain de SDR modeste (moins de 0,5 d
 - S. Braun, I. Tashev, *A consolidated view of loss functions for supervised deep learning-based speech enhancement*, arXiv:2009.12286, 2020 ([arXiv](https://arxiv.org/abs/2009.12286)). Lu en entier ; la page arXiv ne donne pas de conference ni de revue, a completer avant de citer ailleurs.
 - K. Wilson, M. Chinen, J. Thorpe, B. Patton, J. Hershey, R. F. Saurous, J. Skoglund, R. F. Lyon, *Exploring Tradeoffs in Models for Low-latency Speech Enhancement*, arXiv:1811.07030, 2018 ([arXiv](https://arxiv.org/abs/1811.07030)). Lu en entier ; meme remarque sur la conference.
 
-### 3. Changement de la loss
+### 4. Changement de la loss
+
+**A lancer apres la section 2** : la baseline de comparaison est celle retenue par l'optimisation du lr et du scheduler (section 2), pas forcement celle de la section « Passage de Mono a Stereo ». Les resultats chiffres ci-dessous pour la baseline (SDR 4,50 dB, etc.) sont ceux du reglage initial (lr 1e-3 constant).
 
 **Hypothese.** La loss de la baseline (L1 sur l'amplitude) n'est pas ce que l'on mesure. L'evaluation compare des *formes d'onde*, obtenues apres iSTFT avec la phase du melange ; la loss ne regarde que l'amplitude avant reconstruction, et ignore donc l'effet de la phase du melange et de l'iSTFT (la STFT modifiee n'est plus forcement coherente). Entrainer directement sur la forme d'onde reconstruite (`_to_wave`, deja differentiable) devrait rapprocher l'optimisation du SDR/SI-SDR evalue.
 

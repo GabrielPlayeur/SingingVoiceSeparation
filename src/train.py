@@ -1,7 +1,7 @@
 import hydra
 from omegaconf import DictConfig
 import lightning as L
-from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
+from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import OmegaConf
 
@@ -37,15 +37,17 @@ def main(cfg: DictConfig):
     logger.experiment.define_metric("val/si_sdri_median", summary="max")
 
     callbacks = [
-        EarlyStopping(
+        ModelCheckpoint(monitor="val/si_sdr_median", save_top_k=1, mode="max"),
+        OracleValReference(n_fft=cfg.model.n_fft, hop_length=cfg.model.hop_length),
+        LearningRateMonitor(logging_interval="epoch"),  # courbe du lr dans W&B (constante, ou cosinus)
+    ]
+    if cfg.training.early_stopping_patience is not None:  # null : désactivé (il couperait la décroissance du scheduler)
+        callbacks.insert(0, EarlyStopping(
             monitor="val/si_sdr_median",
             mode="max",
             patience=cfg.training.early_stopping_patience,
             min_delta=cfg.training.early_stopping_min_delta,
-        ),
-        ModelCheckpoint(monitor="val/si_sdr_median", save_top_k=1, mode="max"),
-        OracleValReference(n_fft=cfg.model.n_fft, hop_length=cfg.model.hop_length),
-    ]
+        ))
 
     trainer = L.Trainer(
         max_epochs=cfg.training.max_epochs,

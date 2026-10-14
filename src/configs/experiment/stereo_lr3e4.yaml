@@ -1,0 +1,9 @@
+# @package _global_
+# Optimisation de la baseline : stéréo, loss L1 d'amplitude, seul le learning rate / scheduler change (lr 3e-4 constant).
+data:
+  channels: 2
+model:
+  learning_rate: 0.0003
+  scheduler: none
+wandb:
+  run_name: unet-stereo-lr3e4

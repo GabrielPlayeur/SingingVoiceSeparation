@@ -6,6 +6,9 @@ from .utils.utils import si_sdr
 from .utils.input_transform import INPUT_TRANSFORMS, compress, transform_amplitude
 from .utils.losses import LOSS_TYPES, sisdr_loss, wsdr_loss, multires_stft_loss
 
+SCHEDULERS = ("none", "cosine")
+
+
 class VoiceSeparationModule(L.LightningModule):
     def __init__(self, 
                  base_channels: int, 
@@ -19,10 +22,13 @@ class VoiceSeparationModule(L.LightningModule):
                  input_power: float = 0.3,       # exposant de input_transform="power"
                  loss_power: float = 1.0,        # exposant de compression dans la loss ; 1.0 = L1 sur l'amplitude linéaire (baseline)
                  loss_type: str = "amp_l1",      # voir utils/losses.py ; absent des anciens checkpoints = "amp_l1" (baseline)
+                 scheduler: str = "none",        # "none" : lr constant (baseline) | "cosine" : décroissance en cosinus jusqu'à 0 ; absent des anciens checkpoints = "none"
                 ):
         super().__init__()
         if input_transform not in INPUT_TRANSFORMS:
             raise ValueError(f"input_transform={input_transform!r} inconnu, choisir parmi {INPUT_TRANSFORMS}")
+        if scheduler not in SCHEDULERS:
+            raise ValueError(f"scheduler={scheduler!r} inconnu, choisir parmi {SCHEDULERS}")
         if loss_type not in LOSS_TYPES:
             raise ValueError(f"loss_type={loss_type!r} inconnu, choisir parmi {LOSS_TYPES}")
         if loss_type != "amp_l1" and loss_power != 1.0:
@@ -126,4 +132,13 @@ class VoiceSeparationModule(L.LightningModule):
         return self._to_wave(voc_amp, batch["mix_phase"], batch["mixture"].shape[-1])
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
+        if self.hparams.scheduler == "none":
+            return optimizer
+        # Cosinus de Loshchilov & Hutter 2017 (SGDR, eq. 5) SANS redémarrage : η_t = η_max/2 · (1 + cos(π t / T)), η_min = 0, mis à
+        # jour à chaque pas (comme dans le papier), T = nombre total de pas de l'entraînement (max_epochs x pas par époque).
+        total_steps = self.trainer.estimated_stepping_batches
+        if not 0 < total_steps < float("inf"):
+            raise ValueError("scheduler='cosine' demande un max_epochs fini : le cosinus s'étale sur tout l'entraînement")
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=int(total_steps), eta_min=0.0)
+        return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step"}}

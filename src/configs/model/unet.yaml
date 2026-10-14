@@ -8,3 +8,4 @@ input_transform: none   # none | log1p | sqrt | norm
 input_power: 0.3        # exposant quand input_transform=power
 loss_power: 1.0         # exposant de compression de la loss (1.0 = L1 linéaire, baseline)
 loss_type: amp_l1       # amp_l1 | sisdr | wsdr | mrstft (loss sur la forme d'onde : voir utils/losses.py)
+scheduler: none         # none (lr constant) | cosine (décroissance en cosinus jusqu'à 0 sur tout l'entraînement, sans redémarrage)

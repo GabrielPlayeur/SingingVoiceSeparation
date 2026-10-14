@@ -1,0 +1,12 @@
+{
+  "stereo": {
+    "epochs": 150,
+    "best": 4.135776042938232,
+    "best_epoch": 134,
+    "last_mean": 3.952952671051025,
+    "last_std": 0.08422535320425079,
+    "final": 4.037295818328857,
+    "epoch_to_epoch_std": 0.3221468337773482,
+    "wandb_run": "fgvzjxua"
+  }
+}

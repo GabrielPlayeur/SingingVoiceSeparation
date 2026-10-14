@@ -1,0 +1,12 @@
+# @package _global_
+# Optimisation de la baseline : stéréo, loss L1 d'amplitude, seul le learning rate / scheduler change (lr 3e-4 + cosinus).
+# Early stopping désactivé : il couperait le cosinus avant la fin de la décroissance (tous les runs de cette étude : 150 époques).
+data:
+  channels: 2
+model:
+  learning_rate: 0.0003
+  scheduler: cosine
+training:
+  early_stopping_patience: null
+wandb:
+  run_name: unet-stereo-lr3e4-cosine
