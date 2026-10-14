@@ -36,6 +36,7 @@ if [ -f "$_ENV_DIR/env.local.sh" ]; then source "$_ENV_DIR/env.local.sh"; fi
 : "${LOCAL_MUSDB:=}"              # vide = <dépôt>/musdb18
 # KEEP_ZIP=1 pour garder le zip (4,7 Go) après extraction ; supprimé par défaut (disque de données de 50 Go)
 : "${DATASET_URL:=https://zenodo.org/records/1117372/files/musdb18.zip}"   # TODO: vérifier l'URL (MUSDB18 compressé, ~4,7 Go)
+: "${HF_REPO:=}"                    # relais de données : utilisateur/nom d'un dépôt Hugging Face dataset PRIVÉ (hf_upload.sh / get_data_hf.sh)
 : "${LOCAL_RESULTS_DIR:=}"        # vide = <dépôt>/outputs/server
 
 # ---- Spécifique AutoDL : à vérifier dans la doc AutoDL avant d'acheter ---------------------------------------------------
@@ -60,6 +61,6 @@ if [ -f "$_ENV_DIR/env.local.sh" ]; then source "$_ENV_DIR/env.local.sh"; fi
 : "${WANDB_MODE:=offline}"        # offline | online (online demande WANDB_API_KEY dans l'environnement)
 : "${SHUTDOWN_WAIT_MIN:=180}"     # run_queue.py --shutdown : attente max du fichier FETCHED avant d'abandonner l'extinction
 
-export SSH_HOST SSH_PORT SSH_USER SSH_KEY REPO_URL GIT_TAG DATA_ROOT SERVER_REPO BOOTSTRAP_DIR MUSDB_RAW MUSDB_PROCESSED SPLIT_PATH \
+export HF_REPO SSH_HOST SSH_PORT SSH_USER SSH_KEY REPO_URL GIT_TAG DATA_ROOT SERVER_REPO BOOTSTRAP_DIR MUSDB_RAW MUSDB_PROCESSED SPLIT_PATH \
        ORACLE_CACHE_DIR RUNS_DIR DOWNLOAD_DIR LOCAL_MUSDB DATASET_URL LOCAL_RESULTS_DIR NET_TURBO_FILE SHUTDOWN_CMD CPU_CORES \
        UV_INSTALL_CMD PYPI_MIRROR TORCH_INDEX TORCH_WHEELS_URL DEFAULT_PARALLEL WANDB_MODE SHUTDOWN_WAIT_MIN
