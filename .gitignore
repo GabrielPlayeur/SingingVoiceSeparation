@@ -18,3 +18,9 @@ musdb18/
 wandb/
 VoiceSeparation/
 outputs/
+
+#deploiement
+runs/
+deploy/env.local.sh
+infos.ms
+deploy/__pycache__/

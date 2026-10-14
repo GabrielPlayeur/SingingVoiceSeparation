@@ -1,0 +1,23 @@
+# File d'expériences. Chaque entrée = un run (entraînement + évaluation) par seed. Lancer un groupe à la fois :
+#   python deploy/run_queue.py --tag lr-v1 --group lr --parallel 3
+# `overrides` = arguments Hydra de `python -m src.train`. Déjà faits en local (pas relancés ici) : stereo, stereo_cosine.
+parallel: 3        # défaut, surchargé par --parallel
+seeds: [42]        # défaut, surchargé par `seeds:` d'une entrée
+
+experiments:
+  # --- 1. learning rate (README « Optimisation de la baseline ») : à comparer sur la validation, puis écrire le gagnant
+  #        à la main dans src/configs/model/unet.yaml, commiter, poser un nouveau tag avant le groupe suivant.
+  - {name: lr3e4,        group: lr, overrides: ["experiment=stereo_lr3e4"]}
+  - {name: lr3e4_cosine, group: lr, overrides: ["experiment=stereo_lr3e4_cosine"]}
+  - {name: lr1e4,        group: lr, overrides: ["experiment=stereo_lr1e4"]}   # optionnel dans le README
+
+  # --- 2. loss sur la forme d'onde (avec le lr retenu)
+  - {name: sisdr,        group: loss, overrides: ["experiment=stereo_sisdr"]}
+  - {name: wsdr,         group: loss, overrides: ["experiment=stereo_wsdr"]}
+  - {name: mrstft,       group: loss, overrides: ["experiment=stereo_mrstft"]}
+
+  # --- 3. compression de l'amplitude en entrée / dans la loss
+  - {name: power_loss,   group: power, overrides: ["experiment=stereo_power_loss"]}
+  - {name: power_in,     group: power, overrides: ["experiment=stereo_power_in"]}
+  - {name: power_both,   group: power, overrides: ["experiment=stereo_power_both"]}
+  - {name: norm,         group: power, overrides: ["experiment=stereo_norm"]}
