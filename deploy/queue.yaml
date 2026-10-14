@@ -23,3 +23,18 @@ experiments:
   - {name: power_in,     group: power, overrides: ["experiment=stereo_power_in"]}
   - {name: power_both,   group: power, overrides: ["experiment=stereo_power_both"]}
   - {name: norm,         group: power, overrides: ["experiment=stereo_norm"]}
+
+  # --- 4. courbe taille/qualité (README section 5) : seule la largeur du U-Net change (base_channels), baseline stéréo lr 1e-3.
+  #        w16 = la baseline, relancée ici pour avoir un point de la courbe obtenu sur la même machine que les autres.
+  #        w64 (~157 M de paramètres, 6,02 Gio de pic mesurés) dépasse le budget de 4 Go de VRAM : il n'est entraîné que sur le serveur.
+  - {name: w4,           group: size, overrides: ["experiment=stereo_w4"]}
+  - {name: w8,           group: size, overrides: ["experiment=stereo_w8"]}
+  - {name: w16,          group: size, overrides: ["experiment=stereo"]}
+  - {name: w32,          group: size, overrides: ["experiment=stereo_w32"]}
+  - {name: w64,          group: size, overrides: ["experiment=stereo_w64"]}
+
+  # --- 0. variabilité entre graines (README « Next steps ») : baseline mono et stéréo, 3 graines chacune, sur la même machine.
+  #        Seule la graine d'entraînement change (`seed=`) ; le split reste fixé par data.random_seed=42.
+  #        C'est ce qui permet de dire si +0,04 dB (stéréo − mono) et les écarts de 0,1-0,3 dB des autres expériences sont du bruit.
+  - {name: stereo,       group: seeds, seeds: [42, 43, 44], overrides: ["experiment=stereo"]}
+  - {name: mono,         group: seeds, seeds: [42, 43, 44], overrides: ["data.channels=1"]}

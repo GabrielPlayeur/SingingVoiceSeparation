@@ -1,0 +1,9 @@
+# @package _global_
+# Courbe taille/qualité : baseline stéréo (lr 1e-3 constant, loss L1 d'amplitude), seule la LARGEUR du U-Net change :
+# base_channels = 4 au lieu de 16 (profondeur 6 inchangée, donc même crop et mêmes données). Voir README, section 5.
+data:
+  channels: 2
+model:
+  base_channels: 4
+wandb:
+  run_name: unet-stereo-w4

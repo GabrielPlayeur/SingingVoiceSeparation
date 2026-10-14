@@ -1,0 +1,10 @@
+# @package _global_
+# Courbe taille/qualité : baseline stéréo (lr 1e-3 constant, loss L1 d'amplitude), seule la LARGEUR du U-Net change :
+# base_channels = 64 au lieu de 16 (profondeur 6 inchangée, donc même crop et mêmes données). Voir README, section 5.
+# ~157 M de paramètres : 6,02 Gio de pic de VRAM mesurés (batch 8), au-dessus du budget de 4 Go (modèle entraîné sur le serveur uniquement, pour le haut de la courbe).
+data:
+  channels: 2
+model:
+  base_channels: 64
+wandb:
+  run_name: unet-stereo-w64
