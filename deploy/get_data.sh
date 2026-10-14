@@ -6,7 +6,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 URL="${1:-$DATASET_URL}"
 MANIFEST="$DEPLOY_DIR/manifest_musdb18.json"
 require_cmd wget "apt install wget"; require_cmd unzip "apt install unzip"
-enable_net_turbo
+# l'accélérateur réseau (proxy) est réservé à GitHub/Hugging Face : sur Zenodo il ralentit (mesuré : 23 Ko/s). USE_NET_TURBO=1 pour l'activer quand même.
+if [ "${USE_NET_TURBO:-0}" = "1" ]; then enable_net_turbo; fi
 mkdir -p "$DOWNLOAD_DIR" "$MUSDB_RAW"
 zip="$DOWNLOAD_DIR/musdb18.zip"
 log "téléchargement de $URL (reprise automatique si interrompu : relancer la commande)"
