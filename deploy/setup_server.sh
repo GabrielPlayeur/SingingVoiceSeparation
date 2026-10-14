@@ -47,8 +47,23 @@ git -C "$SERVER_REPO" checkout --quiet "$TAG"
 log "dépôt sur le tag $TAG ($(git -C "$SERVER_REPO" rev-parse --short HEAD))"
 
 # 4. environnement Python figé par uv.lock
-log "uv sync --frozen (téléchargement de torch : plusieurs Go)"
-(cd "$SERVER_REPO" && uv sync --frozen) || die "uv sync a échoué (réseau ? index PyTorch ? espace disque : df -h $DATA_ROOT)"
+if [ -z "$PYPI_MIRROR" ]; then
+    log "uv sync --frozen (téléchargement de torch + CUDA : ~4 Go)"
+    (cd "$SERVER_REPO" && uv sync --frozen) || die "uv sync a échoué (réseau ? index PyTorch ? espace disque : df -h /)"
+else
+    # mêmes versions que uv.lock (uv export les fige), téléchargées depuis PYPI_MIRROR ; torch+cu128 depuis TORCH_FIND_LINKS ou TORCH_INDEX
+    log "installation via miroir $PYPI_MIRROR (versions de uv.lock)"
+    req="$(mktemp)"
+    (
+        cd "$SERVER_REPO"
+        uv export --frozen --no-hashes --no-emit-project -o "$req" >/dev/null
+        uv venv --allow-existing .venv
+        extra=(--extra-index-url "$TORCH_INDEX")
+        if [ -n "$TORCH_FIND_LINKS" ]; then extra=(--find-links "$TORCH_FIND_LINKS"); fi
+        uv pip install --python .venv/bin/python -r "$req" --index-url "$PYPI_MIRROR" "${extra[@]}" --index-strategy unsafe-best-match
+    ) || { rm -f "$req"; die "installation via miroir échouée (miroir injoignable ? espace disque : df -h /) ; relancer : les roues déjà reçues sont en cache"; }
+    rm -f "$req"
+fi
 
 # 5. dossiers
 mkdir -p "$MUSDB_RAW" "$ORACLE_CACHE_DIR" "$RUNS_DIR" "$DOWNLOAD_DIR"

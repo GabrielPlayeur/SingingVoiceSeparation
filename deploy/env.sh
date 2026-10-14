@@ -46,6 +46,12 @@ if [ -f "$_ENV_DIR/env.local.sh" ]; then source "$_ENV_DIR/env.local.sh"; fi
 # export UV_DEFAULT_INDEX="https://pypi.tuna.tsinghua.edu.cn/simple"      # miroir PyPI (pyproject.toml pointe aussi vers download.pytorch.org)
 # export UV_PYTHON_INSTALL_MIRROR="..."                                   # miroir de Python (sinon uv télécharge depuis GitHub)
 # export UV_PYTHON="/usr/bin/python3.12"                                  # ou utiliser le Python 3.12 de l'image
+# Installation via miroir : si PYPI_MIRROR est non vide, setup_server.sh n'utilise pas `uv sync --frozen` (qui télécharge les URL
+# figées dans uv.lock, depuis files.pythonhosted.org / pytorch.org, lentes depuis la Chine) mais `uv export` + `uv pip install` :
+# MÊMES versions exactes que le lock, téléchargées depuis le miroir.
+: "${PYPI_MIRROR:=}"                  # TODO: vérifier dans la doc AutoDL ; ex. https://mirrors.aliyun.com/pypi/simple/ (celui de pip.conf de l'image)
+: "${TORCH_INDEX:=https://download.pytorch.org/whl/cu128}"   # index des roues torch+cu128 (seul à les avoir)
+: "${TORCH_FIND_LINKS:=}"             # TODO: miroir des roues torch, s'il existe et est plus rapide (remplace TORCH_INDEX). À tester avec curl d'abord
 : "${UV_INSTALL_CMD:=python3 -m pip install uv}"   # TODO: vérifier dans la doc AutoDL (pip ou accès à astral.sh ?)
 
 # ---- Exécution ---------------------------------------------------------------------------------------------------------
@@ -55,4 +61,4 @@ if [ -f "$_ENV_DIR/env.local.sh" ]; then source "$_ENV_DIR/env.local.sh"; fi
 
 export SSH_HOST SSH_PORT SSH_USER SSH_KEY REPO_URL GIT_TAG DATA_ROOT SERVER_REPO BOOTSTRAP_DIR MUSDB_RAW MUSDB_PROCESSED SPLIT_PATH \
        ORACLE_CACHE_DIR RUNS_DIR DOWNLOAD_DIR LOCAL_MUSDB DATASET_URL LOCAL_RESULTS_DIR NET_TURBO_FILE SHUTDOWN_CMD CPU_CORES \
-       UV_INSTALL_CMD DEFAULT_PARALLEL WANDB_MODE SHUTDOWN_WAIT_MIN
+       UV_INSTALL_CMD PYPI_MIRROR TORCH_INDEX TORCH_FIND_LINKS DEFAULT_PARALLEL WANDB_MODE SHUTDOWN_WAIT_MIN
