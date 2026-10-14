@@ -198,3 +198,62 @@ Attendu (⚠ estimations, pas des mesures) : gain de SDR modeste (moins de 0,5 d
 - K. Wilson, M. Chinen, J. Thorpe, B. Patton, J. Hershey, R. F. Saurous, J. Skoglund, R. F. Lyon, *Exploring Tradeoffs in Models for Low-latency Speech Enhancement*, arXiv:1811.07030, 2018 ([arXiv](https://arxiv.org/abs/1811.07030)). Lu en entier ; meme remarque sur la conference.
 
 ### 3. Changement de la loss
+
+**Hypothese.** La loss de la baseline (L1 sur l'amplitude) n'est pas ce que l'on mesure. L'evaluation compare des *formes d'onde*, obtenues apres iSTFT avec la phase du melange ; la loss ne regarde que l'amplitude avant reconstruction, et ignore donc l'effet de la phase du melange et de l'iSTFT (la STFT modifiee n'est plus forcement coherente). Entrainer directement sur la forme d'onde reconstruite (`_to_wave`, deja differentiable) devrait rapprocher l'optimisation du SDR/SI-SDR evalue.
+
+**Ce que disent les etudes** (lues en entier, voir les references) :
+
+| | Le Roux et al. | Choi et al. | Yamamoto et al. |
+|---|---|---|---|
+| contribution | definit le **SI-SDR** et montre les defauts du SDR de BSS eval | **weighted-SDR (wSDR)**, loss sur la forme d'onde apres iSTFT | **STFT multi-resolution** (convergence spectrale + magnitude log) |
+| tache | definition de metrique ; exemples sur de la parole (CHiME2) et comparaison sur wsj0-2mix | rehaussement de la parole (VoiceBank-DEMAND, 16 kHz), masque complexe borne par tanh | vocodeur neuronal de parole (TTS, 24 kHz) |
+| ce qui est montre | SDR et SI-SDR different d'environ 0,5 dB (0,3 a 0,6) sur wsj0-2mix ; le SDR de BSS eval peut rester eleve alors qu'une partie du spectre est supprimee | « almost every result shows that optimizing with wSDR loss gives the best result » face a MSE spectrogramme et MSE forme d'onde, sur 3 masques x 3 tailles de reseau ; mais la MSE spectrogramme donne souvent un meilleur PESQ (DCU-10, DCU-16) | la loss multi-resolution donne un meilleur MOS que la meme loss a une seule resolution ; elle « prevents the generator from being overfit to a fixed STFT representation » |
+
+**Ce que ces etudes ne montrent pas, et qui borne notre conclusion.**
+- Aucune ne traite de **separation musicale**. Choi (parole bruitee, 16 kHz, masque complexe), Yamamoto (synthese vocale, evaluee par ecoute) et Le Roux (metrique) portent sur autre chose : on teste si l'idee transfere a une voix chantee sur un melange dense.
+- Le Roux et al. **ne proposent pas** d'entrainer avec le SI-SDR : l'article definit la metrique et cite d'autres travaux qui l'utilisent comme loss (« outperforming least-squares on some tasks »). Le lien avec la loss est donc notre extrapolation.
+- L'argument « sensible a la phase » de Choi vient d'un masque **complexe** qui corrige la phase. Ici le masque est reel dans [0, 1] et la phase est celle du melange, fixe : la loss ne peut agir que sur l'amplitude. Le gain attendu est borne par ce plafond (oracle 9,09 dB contre 4,50 dB pour le modele : l'ecart est surtout celui du modele, pas du plafond de l'amplitude).
+- Yamamoto n'a pas de resolution definie pour 44,1 kHz ni de separation de sources : voir les choix ci-dessous.
+
+**Experiences** (une seule variable change par rapport a la baseline stereo ; code dans `src/utils/losses.py`, branchement dans `VoiceSeparationModule._loss`, reglages dans `src/configs/experiment/`) :
+
+| config | loss (sur la forme d'onde estimee ŷ = iSTFT(masque · \|X\|, phase du melange)) | source | commande |
+|---|---|---|---|
+| baseline | L1(\|X̂\|, \|S\|) sur l'amplitude | Jansson et al. 2017 | `experiment=stereo` (deja faite) |
+| sisdr | −SI-SDR(ŷ, y) | Le Roux et al. eq. 4-5 | `uv run python -m src.train experiment=stereo_sisdr` |
+| wsdr | −[α·cos(y, ŷ) + (1−α)·cos(z, ẑ)], z = x − y, ẑ = x − ŷ, α = ‖y‖²/(‖y‖²+‖z‖²) | Choi et al. eq. 7 et 9 | `uv run python -m src.train experiment=stereo_wsdr` |
+| mrstft | moyenne sur 3 resolutions de ‖\|S(y)\|−\|S(ŷ)\|‖_F/‖\|S(y)\|‖_F + mean\|log\|S(y)\|−log\|S(ŷ)\|\| | Yamamoto et al. eq. 3-6, table 1 | `uv run python -m src.train experiment=stereo_mrstft` |
+
+Choix de conception et ce qu'ils changent :
+- **SI-SDR** : c'est la meme fonction que `val/si_sdr_*` (`utils.si_sdr`, moyenne sur les canaux). On optimise donc exactement la metrique suivie ; c'est voulu, mais cela impose de decider sur le **SDR museval du jeu de test**, pas sur le SI-SDR de validation, sur lequel ce modele est avantage.
+- **wSDR** : calcule par exemple et par canal, puis moyenne ; `y` = voix, `z = x − y` = accompagnement (le melange est bien `voix + accompagnement`, `dataset.py`). Epsilon de 1e-8 aux denominateurs (le papier en ajoute un, valeur non donnee). Borne dans [−1, 1] (verifie : −1,000 quand ŷ = y). Contrairement a la forme en cosinus seule, le terme de bruit ẑ = x − ŷ la rend **sensible a l'echelle** de ŷ (verifie : −0,947 pour ŷ = 0,5·y ou 1,5·y), c'est ce que le papier cherche.
+- **mrstft** : resolutions du papier (fenetres de 25 / 50 / 10 ms, pas de 5 / 10 / ~2 ms) **converties en echantillons a 44,1 kHz en gardant les durees** : (FFT, fenetre, pas) = (2048, 1102, 220), (4096, 2205, 441), (1024, 441, 92) ⚠ adaptation faite ici, le papier ne traite que le 24 kHz. Poids 1 entre les deux termes, comme dans le papier. Plancher de 1e-7 sur \|STFT\|² (la derivee de \|z\| n'existe pas en 0 ; choix d'implementation, absent du papier). Pas de terme L1 sur la forme d'onde : il faudrait un poids que rien ne justifie (sur un batch, modele non entraine : L1 d'onde 0,033 contre 2,0 pour la loss multi-resolution, l'ajouter sans poids reviendrait a l'ignorer).
+- Un modele de loss ≠ baseline n'a pas de `loss_power` (erreur explicite sinon) ; `val/loss` n'est **comparable qu'entre modeles de meme loss** : l'arret anticipe et le checkpoint utilisent `val/si_sdr_median`, commun a toutes les experiences.
+- Cout (mesure apres echauffement, moyenne de 10 pas, batch 8 stereo, GPU 4 Go, hors chargement des donnees et validation) : baseline 0,29 s/pas et 1,37 Gio de pic de VRAM ; sisdr et wsdr 0,32 s/pas et 1,60 Gio ; mrstft 0,70 s/pas (2,4 fois la baseline) et 2,38 Gio, grace au recalcul des resolutions a la retropropagation (3,42 Gio sans).
+
+**Verifications faites.** SI-SDR et wSDR recalcules a la main : meme valeur (7,386 dB ; −0,919) ; `mrstft(y, y) = 0` ; gradients finis (y compris cible avec silence numerique exact et ŷ = 0) ; le gradient avec recalcul est identique a celui sans ; la baseline (`loss_type=amp_l1`) reste exactement la L1 d'avant ; l'ancien checkpoint stereo se recharge (`loss_type=amp_l1` par defaut) ; un entrainement de 4 pas + validation + sauvegarde + rechargement passe pour les 3 losses.
+
+**Le niveau de sortie est-il un risque ?** Le SI-SDR ne penalise pas une erreur de gain, alors que le SDR museval (et le SNR) en dependent : une loss −SI-SDR ne donne aucun signal sur le niveau de la voix estimee. Mesure sur la baseline (80 extraits de validation, `python -m analysis.output_scale`) :
+
+![niveau de sortie](figures/output_scale.png)
+
+- SI-SDR median 4,26 dB, SNR median 5,32 dB. Le SI-SDR n'est pas borne par le SNR (Le Roux, § 2.2), l'ecart n'a donc pas de signe imposee.
+- Gain optimal α median −0,77 dB (p10 −3,92, p90 +0,33) : la voix estimee est plutot **un peu trop forte**.
+- Cout du niveau, SNR(α·ŝ) − SNR(ŝ) : 0,13 dB median (p90 0,83). La baseline a donc un niveau deja correct ; c'est la reference a comparer apres entrainement.
+
+Prediction a tester (⚠ pas une mesure) : pour `sisdr` le cout du niveau augmente (le masque borne dans [0, 1] limite la derive, mais rien ne la corrige) ; `wsdr` et `mrstft` (convergence spectrale relative a ‖S(y)‖) y sont sensibles. Si le cout reste ≈ 0,1 dB, le risque est ecarte.
+
+Ordre propose : `sisdr` (la plus proche de la metrique), puis `wsdr`, puis `mrstft`, une seule graine chacun ; un ecart de quelques dixiemes de dB n'est pas interpretable seul (voir l'IC95 % du test apparie).
+
+```
+uv run python -m src.evaluate CKPT -o outputs/eval_stereo_sisdr.json
+python -m analysis.compare_runs outputs/eval_stereo.json outputs/eval_stereo_sisdr.json --names stereo sisdr
+python -m analysis.output_scale --ckpt stereo=<ckpt baseline> --ckpt sisdr=<ckpt sisdr>
+```
+
+Attendu (⚠ estimation, ROADMAP 2b, pas une mesure) : +0,3 a 1 dB de SDR. Si l'hypothese est infirmee : l'ecart d'optimisation entre la L1 d'amplitude et le SDR n'est pas le facteur limitant et c'est la phase du melange qui plafonne (ce que l'oracle a deja quantifie), ou l'avantage observe sur la parole ne se transfere pas a la musique. Resultat : [TODO]{entrainer, evaluer et comparer}.
+
+**References**
+- J. Le Roux, S. Wisdom, H. Erdogan, J. R. Hershey, *SDR – half-baked or well done?*, arXiv:1811.02508, 2018 ([arXiv](https://arxiv.org/abs/1811.02508)). Lu en entier ; la page arXiv ne donne pas la conference (ICASSP 2019, de memoire, non verifie).
+- H.-S. Choi, J.-H. Kim, J. Huh, A. Kim, J.-W. Ha, K. Lee, *Phase-aware Speech Enhancement with Deep Complex U-Net*, ICLR 2019, arXiv:1903.03107 ([arXiv](https://arxiv.org/abs/1903.03107)). Lu en entier.
+- R. Yamamoto, E. Song, J.-M. Kim, *Parallel WaveGAN: a fast waveform generation model based on generative adversarial networks with multi-resolution spectrogram*, ICASSP 2020, arXiv:1910.11480 ([arXiv](https://arxiv.org/abs/1910.11480)). Lu en entier (la section sur la loss multi-resolution et la table 1).

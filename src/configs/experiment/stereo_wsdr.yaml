@@ -1,0 +1,8 @@
+# @package _global_
+# Baseline stéréo + weighted-SDR de Choi et al. 2019 (ICLR) sur la forme d'onde reconstruite (terme voix + terme accompagnement).
+data:
+  channels: 2
+model:
+  loss_type: wsdr
+wandb:
+  run_name: unet-stereo-wsdr

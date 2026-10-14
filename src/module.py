@@ -4,6 +4,7 @@ import lightning as L
 from .models.unet import UNet
 from .utils.utils import si_sdr
 from .utils.input_transform import INPUT_TRANSFORMS, compress, transform_amplitude
+from .utils.losses import LOSS_TYPES, sisdr_loss, wsdr_loss, multires_stft_loss
 
 class VoiceSeparationModule(L.LightningModule):
     def __init__(self, 
@@ -17,10 +18,15 @@ class VoiceSeparationModule(L.LightningModule):
                  input_transform: str = "none",  # voir utils/input_transform.py ; absent des anciens checkpoints = "none"
                  input_power: float = 0.3,       # exposant de input_transform="power"
                  loss_power: float = 1.0,        # exposant de compression dans la loss ; 1.0 = L1 sur l'amplitude linéaire (baseline)
+                 loss_type: str = "amp_l1",      # voir utils/losses.py ; absent des anciens checkpoints = "amp_l1" (baseline)
                 ):
         super().__init__()
         if input_transform not in INPUT_TRANSFORMS:
             raise ValueError(f"input_transform={input_transform!r} inconnu, choisir parmi {INPUT_TRANSFORMS}")
+        if loss_type not in LOSS_TYPES:
+            raise ValueError(f"loss_type={loss_type!r} inconnu, choisir parmi {LOSS_TYPES}")
+        if loss_type != "amp_l1" and loss_power != 1.0:
+            raise ValueError(f"loss_power={loss_power} n'a d'effet que pour loss_type='amp_l1' (loss_type={loss_type!r})")
         self.save_hyperparameters()
         self.model = UNet(base_channels=base_channels, depth=depth, in_channels=in_channels)
         self.register_buffer("window", torch.hann_window(n_fft))
@@ -62,16 +68,27 @@ class VoiceSeparationModule(L.LightningModule):
     def forward(self, mix_amp):
         return self.model(transform_amplitude(mix_amp, self.hparams.input_transform, self.hparams.input_power))
 
-    def _loss(self, voc_est_amp, voc_amp):
-        # L1 entre amplitudes compressées (Braun & Tashev 2020, Wilson et al. 2018) ; loss_power = 1 : L1 linéaire de la baseline.
-        # Attention : val/loss n'est comparable qu'entre modèles de même loss_power (le critère d'arrêt est val/si_sdr_median).
-        c = self.hparams.loss_power
-        return nn.functional.l1_loss(compress(voc_est_amp, c), compress(voc_amp, c))
+    def _loss(self, batch, voc_est_amp, voc_est_wave=None):
+        """Loss d'entraînement et de validation. `amp_l1` : L1 entre amplitudes compressées (Braun & Tashev 2020, Wilson et al.
+        2018 ; loss_power = 1 : L1 linéaire de la baseline). Les autres sont calculées sur la forme d'onde reconstruite (voir
+        utils/losses.py). Attention : val/loss n'est comparable qu'entre modèles de même loss_type et loss_power (le critère
+        d'arrêt est val/si_sdr_median, commun à tous)."""
+        kind = self.hparams.loss_type
+        if kind == "amp_l1":
+            c = self.hparams.loss_power
+            return nn.functional.l1_loss(compress(voc_est_amp, c), compress(batch["voc_amp"], c))
+        if voc_est_wave is None:
+            voc_est_wave = self._to_wave(voc_est_amp, batch["mix_phase"], batch["vocals"].shape[-1])
+        if kind == "sisdr":
+            return sisdr_loss(voc_est_wave, batch["vocals"])
+        if kind == "wsdr":
+            return wsdr_loss(batch["mixture"], batch["vocals"], voc_est_wave)
+        return multires_stft_loss(voc_est_wave, batch["vocals"])
 
     def training_step(self, batch, batch_idx):
         mask = self.forward(batch["mix_amp"])
         voc_est_amp = mask * batch["mix_amp"]
-        loss = self._loss(voc_est_amp, batch["voc_amp"])
+        loss = self._loss(batch, voc_est_amp)
         self.log("train/loss", loss, on_step=False, on_epoch=True)
         return loss
 
@@ -81,9 +98,8 @@ class VoiceSeparationModule(L.LightningModule):
     def validation_step(self, batch, batch_idx):
         mask = self.forward(batch["mix_amp"])
         voc_est_amp = mask * batch["mix_amp"]
-        loss = self._loss(voc_est_amp, batch["voc_amp"])
-
         voc_est_wave = self._to_wave(voc_est_amp, batch["mix_phase"], batch["vocals"].shape[-1])
+        loss = self._loss(batch, voc_est_amp, voc_est_wave)
 
 
         # SI-SDR par échantillon (B,), moyenné sur les canaux : la moyenne pondérée par batch_size donne la moyenne exacte sur les crops
