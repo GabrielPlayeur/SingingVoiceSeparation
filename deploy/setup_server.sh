@@ -7,7 +7,7 @@
 # shellcheck source=deploy/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 TAG="${1:-$GIT_TAG}"
-enable_net_turbo
+# (l'accélérateur réseau, un proxy, ne sert qu'à GitHub : il est activé dans git_net seulement ; il casse les miroirs PyPI/torch)
 
 # 1. paquets système (apt seulement si quelque chose manque : apt update peut être lent)
 missing=()
@@ -33,7 +33,7 @@ cat > "$askpass" <<'ASK'
 case "$1" in Username*) echo "x-access-token" ;; *) echo "${GITHUB_TOKEN:-}" ;; esac
 ASK
 chmod 700 "$askpass"
-git_net() { GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 git -c credential.helper= "$@"; }
+git_net() { ( enable_net_turbo; GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 git -c credential.helper= "$@" ); }
 if [ ! -d "$SERVER_REPO/.git" ]; then
     log "clone de $REPO_URL dans $SERVER_REPO"
     mkdir -p "$(dirname "$SERVER_REPO")"
@@ -51,18 +51,32 @@ if [ -z "$PYPI_MIRROR" ]; then
     log "uv sync --frozen (téléchargement de torch + CUDA : ~4 Go)"
     (cd "$SERVER_REPO" && uv sync --frozen) || die "uv sync a échoué (réseau ? index PyTorch ? espace disque : df -h /)"
 else
-    # mêmes versions que uv.lock (uv export les fige), téléchargées depuis PYPI_MIRROR ; torch+cu128 depuis TORCH_FIND_LINKS ou TORCH_INDEX
+    # mêmes versions que uv.lock (uv export les fige), téléchargées depuis PYPI_MIRROR ; torch+cu128 depuis TORCH_WHEELS_URL (URL directes) ou TORCH_INDEX
     log "installation via miroir $PYPI_MIRROR (versions de uv.lock)"
+    # un éventuel proxy hérité de la session (accélérateur réseau) casse les miroirs
+    unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
     req="$(mktemp)"
     (
         cd "$SERVER_REPO"
         uv export --frozen --no-hashes --no-emit-project -o "$req" >/dev/null
         uv venv --allow-existing .venv
-        pip_install() { uv pip install --python .venv/bin/python -r "$req" --index-url "$PYPI_MIRROR" "$@" --index-strategy unsafe-best-match; }
-        if [ -z "$TORCH_FIND_LINKS" ] || ! pip_install --find-links "$TORCH_FIND_LINKS"; then
-            log "miroir torch indisponible ou non utilisé : repli sur $TORCH_INDEX (plus lent)"
-            pip_install --extra-index-url "$TORCH_INDEX"
+        tv_pins=()   # torch et torchvision (versions +cu128) : seuls à venir de l'index PyTorch ; leurs dépendances viennent du miroir PyPI
+        for pkg in torch torchvision; do
+            pin="$(grep -E "^${pkg}==" "$req" | head -1 | sed -E "s/^${pkg}==//; s/[ ;].*//")"
+            [ -n "$pin" ] || { echo "ERREUR: $pkg absent de uv.lock" >&2; exit 1; }
+            tv_pins+=("$pkg==$pin")
+        done
+        grep -vE '^(torch|torchvision)==' "$req" > "$req.rest"
+        tag="$(.venv/bin/python -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')"
+        urls=()
+        for p in "${tv_pins[@]}"; do urls+=("${TORCH_WHEELS_URL%/}/${p%%==*}-${p##*==}-$tag-$tag-manylinux_2_28_x86_64.whl"); done
+        urls=("${urls[@]//+/%2B}")
+        if [ -n "$TORCH_WHEELS_URL" ] && uv pip install --python .venv/bin/python --no-deps "${urls[@]}"; then :; else
+            log "roues torch du miroir indisponibles : repli sur $TORCH_INDEX (plus lent)"
+            uv pip install --python .venv/bin/python --no-deps --index-url "$TORCH_INDEX" "${tv_pins[@]}"
         fi
+        uv pip install --python .venv/bin/python -r "$req.rest" --index-url "$PYPI_MIRROR"
+        rm -f "$req.rest"
     ) || { rm -f "$req"; die "installation via miroir échouée (miroir injoignable ? espace disque : df -h /) ; relancer : les roues déjà reçues sont en cache"; }
     rm -f "$req"
 fi

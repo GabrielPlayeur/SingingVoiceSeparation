@@ -51,7 +51,7 @@ if [ -f "$_ENV_DIR/env.local.sh" ]; then source "$_ENV_DIR/env.local.sh"; fi
 # `uv pip install` : MÊMES versions exactes que le lock, depuis le miroir (~7,6 Mo/s mesurés). Valeurs mesurées/vérifiées le 2026-10-14.
 # Hors de Chine : PYPI_MIRROR= (vide) pour revenir à `uv sync --frozen`.
 : "${PYPI_MIRROR=https://mirrors.aliyun.com/pypi/simple/}"                 # TODO: vérifier dans la doc AutoDL (c'est aussi le miroir du pip.conf de l'image)
-: "${TORCH_FIND_LINKS=https://mirrors.aliyun.com/pytorch-wheels/cu128/}"   # roues torch/torchvision +cu128 ; vide ou en échec : repli sur TORCH_INDEX
+: "${TORCH_WHEELS_URL=https://mirrors.aliyun.com/pytorch-wheels/cu128/}"   # dossier des roues torch/torchvision +cu128 (fichiers joignables, pas leur listing) ; vide ou en échec : repli sur TORCH_INDEX
 : "${TORCH_INDEX:=https://download.pytorch.org/whl/cu128}"
 : "${UV_INSTALL_CMD:=python3 -m pip install uv}"   # TODO: vérifier dans la doc AutoDL (pip ou accès à astral.sh ?)
 
@@ -62,4 +62,4 @@ if [ -f "$_ENV_DIR/env.local.sh" ]; then source "$_ENV_DIR/env.local.sh"; fi
 
 export SSH_HOST SSH_PORT SSH_USER SSH_KEY REPO_URL GIT_TAG DATA_ROOT SERVER_REPO BOOTSTRAP_DIR MUSDB_RAW MUSDB_PROCESSED SPLIT_PATH \
        ORACLE_CACHE_DIR RUNS_DIR DOWNLOAD_DIR LOCAL_MUSDB DATASET_URL LOCAL_RESULTS_DIR NET_TURBO_FILE SHUTDOWN_CMD CPU_CORES \
-       UV_INSTALL_CMD PYPI_MIRROR TORCH_INDEX TORCH_FIND_LINKS DEFAULT_PARALLEL WANDB_MODE SHUTDOWN_WAIT_MIN
+       UV_INSTALL_CMD PYPI_MIRROR TORCH_INDEX TORCH_WHEELS_URL DEFAULT_PARALLEL WANDB_MODE SHUTDOWN_WAIT_MIN
