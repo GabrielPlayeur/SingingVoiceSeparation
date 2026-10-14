@@ -2,8 +2,7 @@
 Usage :
     python -m src.evaluate CKPT [--dataset-path musdb18/processed] [--workers 3] [-o scores.json]
 
-Chaque checkpoint est évalué dans deux protocoles, mono et stéréo (voir `evaluate`), pour comparer à conditions égales un
-modèle mono et un modèle stéréo.
+Évaluation toujours en stéréo (2 canaux), le protocole de la littérature : voir `evaluate`.
 
 L'inférence tourne sur le GPU dans le processus principal ; le calcul des métriques (museval, oracle, SI-SDRi), qui est sur
 CPU et domine le temps, est confié à un pool de processus. Les scores de l'oracle ne dépendent pas du modèle : ils sont mis
@@ -65,13 +64,9 @@ def default_workers(per_worker_gb=2.5, reserve_gb=2.0, max_workers=3):
     return int(max(1, min(max_workers, (os.cpu_count() or 2) - 1, (available_gb - reserve_gb) // per_worker_gb)))
 
 
-PROTOCOLS = {"mono": 1, "stereo": 2}  # nom du protocole -> nombre de canaux des références et de l'estimation
-
-
 def score_track(task):
-    """Métriques d'un morceau dans un protocole (CPU, exécuté dans un processus du pool).
+    """Métriques d'un morceau en stéréo (2 canaux), sur CPU, exécuté dans un processus du pool.
 
-    `task["protocol"]` fixe le nombre de canaux des références relues sur disque ("mono" : moyenne L/R, "stereo" : L et R).
     `task["kind"]` vaut "model" (estimation lue dans un .npy, supprimé après lecture) ou "oracle" (masque idéal).
     """
     vocals_est = None
@@ -80,30 +75,24 @@ def score_track(task):
             vocals_est = np.load(task["est_path"])
         finally:
             os.remove(task["est_path"])
-    sample = MUSDBFullTrackDataset(track_dirs=[task["track_dir"]], sr=task["sr"], channels=PROTOCOLS[task["protocol"]])[0]
+    sample = MUSDBFullTrackDataset(track_dirs=[task["track_dir"]], sr=task["sr"], channels=2)[0]
     mixture_t, vocals_true_t = sample["mixture"], sample["vocals"]
     mixture, vocals_true = mixture_t.numpy(), vocals_true_t.numpy()
     if task["kind"] == "oracle":
         vocals_est = Oracle(**task["oracle"]).evaluate(mixture, vocals_true)
+    suffix = "_oracle" if task["kind"] == "oracle" else ""
     return {
         "kind": task["kind"],
-        "protocol": task["protocol"],
         "n_samples": int(mixture.shape[-1]),
-        "sdr": median_sdr(vocals_true, mixture - vocals_true, vocals_est, mixture - vocals_est, task["sr"]),
-        "si_sdri": si_sdri(torch.from_numpy(vocals_est), mixture_t, vocals_true_t),
+        "sdr" + suffix: median_sdr(vocals_true, mixture - vocals_true, vocals_est, mixture - vocals_est, task["sr"]),
+        "si_sdri" + suffix: si_sdri(torch.from_numpy(vocals_est), mixture_t, vocals_true_t),
     }
 
 
 def evaluate(checkpoint_path, dataset_path, crop_length=261632, batch_size=16, max_tracks=None, logger=None, output_json=None,
              with_oracle=True, workers=None, oracle_cache_dir="outputs/oracle_cache"):
-    """Évalue un checkpoint sur le jeu de test dans LES DEUX protocoles, quel que soit le nombre de canaux du modèle, pour
-    que deux modèles soient toujours comparables à protocole égal :
-
-    - mono   : références et estimation mixées en mono (moyenne L/R). Modèle stéréo : moyenne de ses deux sorties.
-    - stereo : références et estimation sur 2 canaux. Modèle mono : appliqué séparément à L et à R.
-
-    Clés par morceau : `sdr_mono`, `si_sdri_mono`, `sdr_stereo`, `si_sdri_stereo` (+ `*_oracle_*`). Les clés sans suffixe
-    (`sdr`, `si_sdri`, `sdr_oracle`, `si_sdri_oracle`) sont celles du protocole natif du modèle (son nombre de canaux).
+    """Évalue un checkpoint sur le jeu de test, toujours en STÉRÉO : références et estimation sur 2 canaux (SDR museval v4
+    sur 2 canaux), le protocole de la littérature. Un modèle mono (ancien checkpoint) est appliqué séparément à L puis à R.
 
     `workers` : processus de calcul des métriques (0 = dans le processus principal, None = selon la RAM disponible, voir
     `default_workers`). Chacun a besoin d'environ 2,5 Go, davantage pour un morceau de plus de 6 min."""
@@ -111,7 +100,6 @@ def evaluate(checkpoint_path, dataset_path, crop_length=261632, batch_size=16, m
     module = VoiceSeparationModule.load_from_checkpoint(checkpoint_path, map_location="cpu")
     sr = module.hparams.sr
     channels = module.hparams.in_channels
-    native = next(name for name, c in PROTOCOLS.items() if c == channels)
     assert_no_temporal_padding(crop_length, module.hparams.hop_length, module.hparams.depth)
     trainer = Trainer( accelerator="auto",
                        devices=1,
@@ -120,32 +108,29 @@ def evaluate(checkpoint_path, dataset_path, crop_length=261632, batch_size=16, m
                        enable_progress_bar=False
                     )
     oracle_cfg = dict(n_fft=module.hparams.n_fft, hop_length=module.hparams.hop_length)
-    caches = {name: OracleCache(oracle_cache_dir, dataset_path, c, **oracle_cfg) for name, c in PROTOCOLS.items()} if with_oracle else {}
+    cache = OracleCache(oracle_cache_dir, dataset_path, 2, **oracle_cfg) if with_oracle else None
 
     track_dirs = list_track_dirs(dataset_path, "test")
-    datasets = {name: MUSDBFullTrackDataset(track_dirs=track_dirs, sr=sr, channels=c) for name, c in PROTOCOLS.items()}
+    test_dataset = MUSDBFullTrackDataset(track_dirs=track_dirs, sr=sr, channels=2)
 
     n_tracks = len(track_dirs)
     if max_tracks is not None:
         n_tracks = min(n_tracks, max_tracks)
     results = [{"track": os.path.basename(d)} for d in track_dirs[:n_tracks]]
-    kinds = ("", "_oracle") if with_oracle else ("",)
-    required = [f"{metric}{kind}_{name}" for name in PROTOCOLS for kind in kinds for metric in ("sdr", "si_sdri")]
+    required = ["sdr", "si_sdri"] + (["sdr_oracle", "si_sdri_oracle"] if with_oracle else [])
     completed = set()
     bar = tqdm(total=n_tracks, desc="Évaluation", unit="morceau")
 
     def collect(index, part):
         r = results[index]
-        kind = "_oracle" if part["kind"] == "oracle" else ""
-        scores = {f"{metric}{kind}_{part['protocol']}": part[metric] for metric in ("sdr", "si_sdri")}
-        r.update(scores)
-        if part["kind"] == "oracle":
-            caches[part["protocol"]].put(r["track"], {"sdr_oracle": part["sdr"], "si_sdri_oracle": part["si_sdri"],
-                                                      "n_samples": part["n_samples"]})
+        kind, n_samples = part.pop("kind"), part.pop("n_samples")
+        r.update(part)
+        if kind == "oracle":
+            cache.put(r["track"], {**part, "n_samples": n_samples})
         if index not in completed and all(k in r for k in required):
             completed.add(index)
             bar.update(1)
-            bar.set_postfix({f"SDR_{name}": f"{np.nanmedian([results[i][f'sdr_{name}'] for i in completed]):.2f}" for name in PROTOCOLS})
+            bar.set_postfix(SDR_médian=f"{np.nanmedian([results[i]['sdr'] for i in completed]):.2f} dB")
 
     pool = None
     pending = {}  # future -> index
@@ -166,33 +151,25 @@ def evaluate(checkpoint_path, dataset_path, crop_length=261632, batch_size=16, m
                 collect(pending.pop(fut), fut.result())
         pending[pool.submit(score_track, task)] = index
 
-    def separate(mixture):
-        return separate_full_track(module, mixture, crop_length, batch_size=batch_size, trainer=trainer)
-
     try:
         with tempfile.TemporaryDirectory(prefix="eval_est_") as tmp:
             for i in range(n_tracks):
+                stereo_mix = test_dataset[i]["mixture"]  # (2, T)
                 base = dict(track_dir=track_dirs[i], sr=sr)
-                stereo_mix = datasets["stereo"][i]["mixture"]  # (2, T)
-                n_samples = int(stereo_mix.shape[-1])
-                for name in caches:
-                    cached = caches[name].get(results[i]["track"], n_samples)
+                if with_oracle:
+                    cached = cache.get(results[i]["track"], int(stereo_mix.shape[-1]))
                     if cached is None:
-                        submit(i, dict(base, kind="oracle", protocol=name, oracle=oracle_cfg))
+                        submit(i, dict(base, kind="oracle", oracle=oracle_cfg))
                     else:
-                        results[i].update({f"sdr_oracle_{name}": cached["sdr_oracle"], f"si_sdri_oracle_{name}": cached["si_sdri_oracle"]})
-
+                        results[i].update({k: v for k, v in cached.items() if k != "n_samples"})
                 if channels == 2:
-                    stereo_est = separate(stereo_mix)
-                    estimates = {"stereo": stereo_est, "mono": stereo_est.mean(dim=0, keepdim=True)}
-                else:
-                    # le mono natif voit le même signal qu'à l'entraînement ; en stéréo, le modèle traite L puis R
-                    estimates = {"mono": separate(datasets["mono"][i]["mixture"]),
-                                 "stereo": torch.cat([separate(stereo_mix[c:c + 1]) for c in range(2)])}
-                for name, est in estimates.items():
-                    est_path = os.path.join(tmp, f"{i}_{name}.npy")
-                    np.save(est_path, est.numpy())
-                    submit(i, dict(base, kind="model", protocol=name, est_path=est_path))
+                    est = separate_full_track(module, stereo_mix, crop_length, batch_size=batch_size, trainer=trainer)
+                else:  # ancien modèle mono : appliqué à L puis à R
+                    est = torch.cat([separate_full_track(module, stereo_mix[c:c + 1], crop_length, batch_size=batch_size,
+                                                         trainer=trainer) for c in range(2)])
+                est_path = os.path.join(tmp, f"{i}.npy")
+                np.save(est_path, est.numpy())
+                submit(i, dict(base, kind="model", est_path=est_path))
             for fut in cf.as_completed(list(pending)):
                 collect(pending.pop(fut), fut.result())
     finally:
@@ -202,24 +179,22 @@ def evaluate(checkpoint_path, dataset_path, crop_length=261632, batch_size=16, m
             os.environ.pop(k, None) if v is None else os.environ.update({k: v})
         bar.close()
 
-    # clés sans suffixe = protocole natif du modèle (compatibilité avec les JSON et les scripts d'analyse existants)
-    native_keys = [f"{metric}{kind}" for kind in kinds for metric in ("sdr", "si_sdri")]
-    results = [{"track": r["track"], **{k: r[f"{k}_{native}"] for k in native_keys}, **{k: r[k] for k in required}} for r in results]
+    order = ("track", "sdr", "si_sdri", "sdr_oracle", "si_sdri_oracle")
+    results = [{k: r[k] for k in order if k in r} for r in results]
 
-    print(f"\n{len(results)} morceaux, protocole natif du modèle : {native}. Médiane [IC95% bootstrap] en dB")
+    print(f"\n{len(results)} morceaux, protocole stéréo. Médiane [IC95% bootstrap] en dB")
     summary = {}
-    for name in PROTOCOLS:
-        for kind, label in zip(kinds, ("modèle", "oracle")):
-            line = []
-            for metric in ("sdr", "si_sdri"):
-                values = np.array([r[f"{metric}{kind}_{name}"] for r in results])
-                med, lo, hi = bootstrap_ci(values)
-                line.append(f"{'SDR' if metric == 'sdr' else 'SI-SDRi'} {med:5.2f} [{lo:.2f}, {hi:.2f}]")
-                tags = [f"test/{metric}{kind}_{name}"] + ([f"test/{metric}{kind}"] if name == native else [])
-                for tag in tags:
-                    summary.update({f"{tag}_median": med, f"{tag}_mean": float(np.nanmean(values)),
-                                    f"{tag}_ci_low": lo, f"{tag}_ci_high": hi})
-            print(f"  {name:6s} {label:6s} : " + "   ".join(line))
+    for kind, label in (("", "modèle"), ("_oracle", "oracle")):
+        if kind and not with_oracle:
+            continue
+        line = []
+        for metric, name in (("sdr", "SDR"), ("si_sdri", "SI-SDRi")):
+            values = np.array([r[f"{metric}{kind}"] for r in results])
+            med, lo, hi = bootstrap_ci(values)
+            line.append(f"{name} {med:5.2f} [{lo:.2f}, {hi:.2f}]")
+            summary.update({f"test/{metric}{kind}_median": med, f"test/{metric}{kind}_mean": float(np.nanmean(values)),
+                            f"test/{metric}{kind}_ci_low": lo, f"test/{metric}{kind}_ci_high": hi})
+        print(f"  {label:6s} : " + "   ".join(line))
 
     if output_json is not None:
         # scores par morceau, pour comparer deux modèles par test apparié (même morceaux)

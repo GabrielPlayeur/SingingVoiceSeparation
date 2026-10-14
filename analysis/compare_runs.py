@@ -27,8 +27,7 @@ def main():
     ap.add_argument("a")
     ap.add_argument("b")
     ap.add_argument("--names", nargs=2, default=["A", "B"])
-    ap.add_argument("--metric", default="sdr", help="clé du JSON : sdr, si_sdri (protocole natif du modèle), ou à protocole\n"
-                    "égal : sdr_mono, sdr_stereo, si_sdri_mono, si_sdri_stereo")
+    ap.add_argument("--metric", default="sdr", help="clé du JSON de src.evaluate : sdr ou si_sdri (stéréo)")
     ap.add_argument("--exclude", nargs="*", default=[], help="sous-chaînes de noms de morceaux à écarter (ex. 'PR -')")
     args = ap.parse_args()
     setup_style()

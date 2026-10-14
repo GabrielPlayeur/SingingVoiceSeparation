@@ -3,7 +3,7 @@ import torch.nn as nn
 import lightning as L
 from .models.unet import UNet
 from .utils.utils import si_sdr
-from .utils.input_transform import INPUT_TRANSFORMS, transform_amplitude
+from .utils.input_transform import INPUT_TRANSFORMS, compress, transform_amplitude
 
 class VoiceSeparationModule(L.LightningModule):
     def __init__(self, 
@@ -14,7 +14,9 @@ class VoiceSeparationModule(L.LightningModule):
                  learning_rate: float,
                  sr: int,
                  in_channels: int = 1,
-                 input_transform: str = "none",
+                 input_transform: str = "none",  # voir utils/input_transform.py ; absent des anciens checkpoints = "none"
+                 input_power: float = 0.3,       # exposant de input_transform="power"
+                 loss_power: float = 1.0,        # exposant de compression dans la loss ; 1.0 = L1 sur l'amplitude linéaire (baseline)
                 ):
         super().__init__()
         if input_transform not in INPUT_TRANSFORMS:
@@ -58,12 +60,18 @@ class VoiceSeparationModule(L.LightningModule):
         return batch
 
     def forward(self, mix_amp):
-        return self.model(transform_amplitude(mix_amp, self.hparams.input_transform))
+        return self.model(transform_amplitude(mix_amp, self.hparams.input_transform, self.hparams.input_power))
+
+    def _loss(self, voc_est_amp, voc_amp):
+        # L1 entre amplitudes compressées (Braun & Tashev 2020, Wilson et al. 2018) ; loss_power = 1 : L1 linéaire de la baseline.
+        # Attention : val/loss n'est comparable qu'entre modèles de même loss_power (le critère d'arrêt est val/si_sdr_median).
+        c = self.hparams.loss_power
+        return nn.functional.l1_loss(compress(voc_est_amp, c), compress(voc_amp, c))
 
     def training_step(self, batch, batch_idx):
         mask = self.forward(batch["mix_amp"])
         voc_est_amp = mask * batch["mix_amp"]
-        loss = nn.functional.l1_loss(voc_est_amp, batch["voc_amp"])
+        loss = self._loss(voc_est_amp, batch["voc_amp"])
         self.log("train/loss", loss, on_step=False, on_epoch=True)
         return loss
 
@@ -73,7 +81,7 @@ class VoiceSeparationModule(L.LightningModule):
     def validation_step(self, batch, batch_idx):
         mask = self.forward(batch["mix_amp"])
         voc_est_amp = mask * batch["mix_amp"]
-        loss = nn.functional.l1_loss(voc_est_amp, batch["voc_amp"])
+        loss = self._loss(voc_est_amp, batch["voc_amp"])
 
         voc_est_wave = self._to_wave(voc_est_amp, batch["mix_phase"], batch["vocals"].shape[-1])
 

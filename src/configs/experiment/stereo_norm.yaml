@@ -1,5 +1,5 @@
 # @package _global_
-# Baseline stéréo + compression de l'amplitude d'entrée (ROADMAP 2a) : seule variable changée = model.input_transform
+# Baseline stéréo + |X| normalisé par sa moyenne sur chaque extrait de 6 s : invariance exacte au gain (voir src/utils/input_transform.py)
 data:
   channels: 2
 model:

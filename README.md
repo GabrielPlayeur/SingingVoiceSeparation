@@ -113,11 +113,7 @@ L'hypothese est confirmee en tendance : la voix est plus centree que l'accompagn
 
 l'ajout de ce second canal devrait permettre au modele d'utiliser cette information pour trouver des liens dans les frequences afin de mieux separer dans le masque.
 
-Les modeles sont evalues sur les 50 morceaux de test **dans les deux protocoles** (`uv run python -m src.evaluate CKPT -o outputs/eval_<nom>.json`) :
-- **mono** : references et estimation mixees en mono (moyenne L/R) ; pour le modele stereo, moyenne de ses deux sorties ;
-- **stereo** : references et estimation sur 2 canaux ; pour le modele mono, le modele est applique separement a L et a R.
-
-Un premier resultat, ou la baseline mono evaluee en mono etait comparee au modele stereo evalue en stereo (4,70 contre 4,50 dB), laissait croire a une perte de 0,3 dB. C'etait en grande partie un effet de protocole : le meme modele mono passe de 4,70 a 4,51 dB quand on le note en stereo.
+Pour que la comparaison soit juste, les deux modeles ont ete evalues sur les 50 morceaux de test dans les deux protocoles (**mono** : references et estimation mixees en mono ; **stereo** : 2 canaux, le modele mono etant applique separement a L et a R). Un premier resultat comparait la baseline mono evaluee en mono au modele stereo evalue en stereo (4,70 contre 4,50 dB) et laissait croire a une perte de 0,3 dB : c'etait en grande partie un effet de protocole, le meme modele mono passant de 4,70 a 4,51 dB quand on le note en stereo.
 
 | SDR median [IC95 % bootstrap] | modele mono | modele stereo | difference appariee stereo − mono |
 |---|---|---|---|
@@ -133,52 +129,72 @@ Un premier resultat, ou la baseline mono evaluee en mono etait comparee au model
 - **Le stereo n'apporte aucun gain mesurable, mais pas de perte non plus.** Les differences sont de l'ordre de 0,05 dB, tous les intervalles contiennent 0, et le stereo gagne sur 26 morceaux sur 50 : un pile ou face.
 - **L'indice spatial existe pourtant** (voix 9 a 12 dB plus centree que l'accompagnement, voir plus haut). Explication possible, non testee : le mixage mono garde le Mid, donc deja la voix centree, et retire une part plus grande de l'accompagnement (3 % de l'energie de la voix est dans le Side, contre 8,4 % pour l'accompagnement) ; le modele mono beneficie donc d'une partie de l'indice gratuitement. Une autre possibilite, egalement non testee : le modele ne recoit que l'amplitude de L et R, donc pas la difference de phase, et doit retrouver « L ≈ R » avec sa premiere convolution (2 → 16 canaux). Un signal Mid/Side (ou un masque unique applique au Mid) donnerait l'indice directement : piste suivante possible.
 - **Precautions** : une seule graine par configuration (on ne connait pas la variabilite entre deux entrainements, voir `docs/ROADMAP.md`, etape 0), donc des differences de l'ordre de 0,1 a 0,3 dB ne sont pas interpretables. Les intervalles ne mesurent que la variabilite entre morceaux.
-- **Nouvelle baseline pour les iterations suivantes : le modele stereo, evalue en protocole stereo** (SDR median 4,50 dB, oracle 9,09 dB, ecart a l'oracle 4,59 dB), qui est le protocole de la litterature (BSSEval stereo). Les comparaisons se font toujours entre checkpoints evalues dans le meme protocole, avec `python -m analysis.compare_runs outputs/eval_stereo.json outputs/eval_<nom>.json --metric sdr_stereo`. Les chiffres restent non comparables a ceux des papiers (MUSDB18 compresse, melange reconstruit, SDR sur fenetres de 1 s).
+- **Decision : on ne travaille plus qu'en stereo.** Le modele stereo est la nouvelle baseline (SDR median 4,50 dB, oracle 9,09 dB, ecart a l'oracle 4,59 dB) et `src.evaluate` n'evalue plus qu'en stereo (2 canaux, SDR BSSEval sur 2 canaux, protocole de la litterature). Comme il n'y a plus de comparaison mono / stereo a faire, l'evaluation est deux fois moins longue. Les chiffres restent non comparables a ceux des papiers (MUSDB18 compresse, melange reconstruit, SDR sur fenetres de 1 s). Comparaison de deux checkpoints : `python -m analysis.compare_runs outputs/eval_stereo.json outputs/eval_<nom>.json`.
 
-### 2. Compression de l'amplitude en entree
+### 2. Compression de l'amplitude (loi de puissance)
 
-**Hypothese.** Monter ou baisser le volume d'un morceau ne devrait pas changer le masque, donc la separation. Or le reseau recoit |X| brut, sans aucune normalisation, et sa BatchNorm utilise en inference des statistiques glissantes figees : le masque depend du niveau absolu du morceau. Une compression de l'entree (`log1p(|X|)` ou `|X|^0,5`, le masque restant applique a l'amplitude lineaire) devrait reduire cette dependance et rendre les bins faibles plus visibles pour le reseau.
+**Hypothese.** Le reseau recoit |X| brut, sans normalisation, et la loss L1 est dominee par les bins forts (graves, passages forts). Comprimer l'amplitude par une loi de puissance `|X|^c`, `0 < c < 1`, devrait donner plus de poids aux bins faibles (aigus de la voix, sibilantes) et reduire la dependance au niveau sonore du morceau.
 
-**Ce que recoit le reseau** (`python -m analysis.input_amplitude`, 80 extraits de validation et 100 morceaux) :
+**Ce que disent les etudes** (lues en entier, voir les references) :
+
+| | Braun & Tashev | Wilson et al. |
+|---|---|---|
+| tache | rehaussement de la parole (reverberee, CHiME2), reseau recurrent de 2,8 M de parametres | rehaussement de la parole mono/bi-canal (CHiME2 WSJ0), masque de spectrogramme, faible latence |
+| ou est appliquee la compression | **dans la loss** : distance entre amplitudes compressees (« compressed MSE », eq. 11-12) ; l'entree du reseau est un log-spectre de puissance **normalise en moyenne et variance en ligne** | **partout** : entree du reseau, representation sur laquelle le masque est applique, et loss : « all spectra are power-law compressed (with power 0.3) » |
+| exposant | « a commonly used compression exponent is c = 0.3 » | 0,3 |
+| justification et resultat | la loss compressee (avec la MAE) est la meilleure des distances testees, « which can be attributed to a better match to the signal distributions » ; melangee a une loss complexe (β = 0,3) elle donne le meilleur PESQ ; compression benefique sur donnees reverberees reelles | « partially equalizes the importance of quieter sounds relative to loud ones » |
+
+**Ce que ces etudes ne montrent pas, et qui borne notre conclusion.**
+- Ce sont des travaux de **rehaussement de la parole, pas de separation musicale** : on teste ici si l'idee transfere (une voix chantee sur un melange dense de plusieurs instruments, sur du MUSDB18 compresse, avec un U-Net 2D de 9,8 M de parametres).
+- **Aucun des deux n'isole l'effet de la compression de l'entree.** Braun & Tashev comparent des *loss* (la compression est un ingredient de la loss ; leur entree est un log-spectre normalise, pas une loi de puissance) et Wilson et al. appliquent 0,3 partout sans ablation d'exposant dans le texte. Les preuves portent donc surtout sur la **loss** ; la compression de l'entree est ici une extrapolation de Wilson et al.
+- Leurs metriques sont PESQ et SI-SDR sur de la parole, pas le SDR BSSEval sur de la musique.
+- Ni l'un ni l'autre ne traite l'invariance au volume : Braun & Tashev utilisent une normalisation en ligne de l'entree, ce qui est une autre idee (voir `norm` ci-dessous).
+
+**Ce que recoit notre reseau** (`python -m analysis.input_amplitude`, 80 extraits de validation et 100 morceaux) :
 
 ![amplitudes d'entree](figures/input_amplitude_levels.png)
 
-- La mediane de |X| est de 0,059 et le 99,9e percentile de 47 (maximum 263) : **58 dB de dynamique** entre la mediane et le 99,9e percentile, 73 dB jusqu'au maximum. 87 % des bins sont sous 1, zone ou `log1p(|X|) ≈ |X|` : **`log1p` ne comprime donc que les 13 % de bins forts** et laisse presque intacte la majorite de l'entree, alors que `sqrt` comprime tout.
-- 22,8 % des bins sont quasi vides (|X| < 1e-3) : c'est la coupure de l'encodage AAC, qui commence vers 16 kHz (courbe de droite).
-- **Les morceaux different de 10 dB de volume** entre le 10e et le 90e percentile (de −19 a +4 dB pour le niveau moyen de |X|) : le reseau voit en pratique des gains de plusieurs dB d'un morceau a l'autre.
-- La loss L1 sur l'amplitude lineaire est dominee par les graves (niveau moyen jusqu'a +27 dB contre −80 dB au-dessus de 16 kHz).
+- La mediane de |X| est de 0,059 et le 99,9e percentile de 47 (maximum 263) : **58 dB de dynamique** entre la mediane et le 99,9e percentile. 87 % des bins sont sous 1, zone ou `log1p(|X|) ≈ |X|` : `log1p`, que la feuille de route proposait, ne comprime que les 13 % de bins forts et n'est pas ce que font les etudes ; on retient donc la loi de puissance `c = 0,3`.
+- 22,8 % des bins sont quasi vides (|X| < 1e-3) : coupure de l'encodage AAC vers 16 kHz.
+- **Les morceaux different de 10 dB de volume** entre le 10e et le 90e percentile (de −19 a +4 dB pour le niveau moyen de |X|).
+- La loss L1 lineaire est dominee par les graves (niveau moyen jusqu'a +27 dB, contre environ −80 dB au-dessus de 16 kHz).
 
-**Le modele actuel est-il sensible au volume ?** Oui. On multiplie le melange par un gain, puis on mesure le SI-SDR de validation (invariant a l'echelle de la sortie : seul le masque compte) et l'ecart du masque par rapport au gain 0 dB, pour les deux baselines :
+**Le modele actuel est-il sensible au volume ?** Oui. On multiplie le melange par un gain, puis on mesure le SI-SDR de validation (invariant a l'echelle de la sortie : seul le masque compte) et l'ecart du masque par rapport au gain 0 dB, pour la baseline stereo :
 
 ![sensibilite au gain](figures/input_gain_sensitivity.png)
 
 | gain applique | −18 dB | −12 dB | −6 dB | +6 dB | +12 dB | +18 dB |
 |---|---|---|---|---|---|---|
-| Δ SI-SDR, baseline mono | −6,36 | −3,13 | −0,54 | −0,33 | −0,88 | −1,39 |
-| Δ SI-SDR, baseline stereo | −2,64 | −0,99 | −0,15 | −0,35 | −0,99 | −1,32 |
+| Δ SI-SDR (baseline stereo) | −2,64 | −0,99 | −0,15 | −0,35 | −0,99 | −1,32 |
 | ecart moyen du masque | 0,17 | 0,12 | 0,06 | 0,06 | 0,12 | 0,17 |
 
-- Le masque change avec le volume (ecart de 0,06 pour ±6 dB, 0,12 pour ±12 dB) et **la valeur moyenne du masque monte avec le gain** (de 0,33 a 0,42 pour la baseline mono entre −6 et +12 dB) : le reseau laisse passer plus de signal quand le morceau est plus fort.
-- La perte est faible dans la plage normale (≤ 0,55 dB pour ±6 dB), donc comparable a l'incertitude de nos comparaisons, mais elle devient franche pour les morceaux tres faibles : −3,1 dB a −12 dB pour la baseline mono, −1,0 dB pour la stereo. Elle est dissymetrique : baisser le volume coute plus que le monter.
-- **Une compression ne rend pas l'entree invariante au volume** : panneau (a), le decalage de l'entree du reseau sous +6 dB vaut 0,23 ecart-type sans transformation, 0,26 avec `log1p` et 0,26 avec `sqrt`. C'est ce decalage que la BatchNorm en inference ne sait pas absorber. Seule une normalisation par extrait (`norm` : |X| divise par sa moyenne) annule le decalage (0,00). Si `log1p` ou `sqrt` ameliorent le SDR, ce sera donc plutot par la reduction de la dynamique que par l'invariance au volume.
+- Le masque change avec le volume et **sa valeur moyenne monte avec le gain** (de 0,43 a 0,50 entre −6 et +12 dB) : le reseau laisse passer plus de signal quand le morceau est plus fort. La perte est faible dans la plage normale (≤ 0,35 dB pour ±6 dB), franche a ±12 dB et au-dela, et dissymetrique (baisser le volume coute un peu plus que le monter).
+- **Une loi de puissance ne rend pas l'entree invariante au volume** (panneau a) : le decalage de l'entree du reseau sous +6 dB vaut 0,23 ecart-type sans transformation, **0,25 avec `|X|^0,3`**, 0,26 avec `log1p` ou `sqrt`. C'est ce decalage que la BatchNorm en inference ne sait pas absorber. Seule une normalisation par extrait (`norm`) l'annule (0,00). La compression sert donc surtout a rebalancer l'importance des bins faibles, pas a regler le volume.
 
-**Experiences** (une seule variable change par rapport a la baseline stereo, `model.input_transform`, voir `src/utils/input_transform.py`) :
+**Experiences** (une seule variable change par rapport a la baseline stereo ; reglages dans `src/configs/experiment/`, code dans `src/utils/input_transform.py` et `src/module.py`) :
 
-| config | entree du reseau | commande |
-|---|---|---|
-| baseline | \|X\| | `uv run python -m src.train experiment=stereo` (deja faite) |
-| log1p | log(1 + \|X\|) | `uv run python -m src.train experiment=stereo_log1p` |
-| sqrt | \|X\|^0,5 | `uv run python -m src.train experiment=stereo_sqrt` |
-| norm | \|X\| / moyenne par extrait de 6 s | `uv run python -m src.train experiment=stereo_norm` |
+| config | entree du reseau | loss | ce qu'elle teste | commande |
+|---|---|---|---|---|
+| baseline | \|X\| | L1(\|X̂\|, \|S\|) | reference (deja faite) | `uv run python -m src.train experiment=stereo` |
+| power_loss | \|X\| | L1(\|X̂\|^0,3, \|S\|^0,3) | la compression dans la loss (Braun & Tashev) | `uv run python -m src.train experiment=stereo_power_loss` |
+| power_in | \|X\|^0,3 | L1 lineaire | la compression de l'entree seule (Wilson et al., extrapolation) | `uv run python -m src.train experiment=stereo_power_in` |
+| power_both | \|X\|^0,3 | L1(\|X̂\|^0,3, \|S\|^0,3) | les deux, comme Wilson et al. (sauf le masque, qui reste applique a l'amplitude lineaire) | `uv run python -m src.train experiment=stereo_power_both` |
+| norm | \|X\| / moyenne par extrait de 6 s | L1 lineaire | l'invariance exacte au volume | `uv run python -m src.train experiment=stereo_norm` |
 
-Evaluation et comparaison a la baseline stereo, puis mesure de la sensibilite au volume du nouveau checkpoint :
+Choix de conception : le masque reste dans [0, 1] et applique a l'amplitude lineaire du melange (`X̂ = masque · |X|`), seule la distance de la loss et l'entree changent ; la loi de puissance est `(|X| + 1e-8)^c` (la derivee de `x^c` est infinie en 0, et 22,8 % des bins sont quasi nuls). Avec `c = 1` on retrouve exactement la baseline (verifie). `val/loss` n'est comparable qu'entre modeles de meme exposant de loss : l'arret anticipe et le checkpoint s'appuient sur `val/si_sdr_median`.
+
+Ordre propose : **`power_loss` d'abord** (c'est la ou les etudes montrent un effet), puis `power_in`, puis `power_both` si l'un des deux aide, et `norm` pour le volume. 3 a 4 entrainements d'environ 30 min, une seule graine chacun : un ecart de quelques dixiemes de dB n'est pas interpretable seul.
 
 ```
-uv run python -m src.evaluate CKPT -o outputs/eval_stereo_log1p.json
-python -m analysis.compare_runs outputs/eval_stereo.json outputs/eval_stereo_log1p.json --names stereo log1p --metric sdr_stereo
-python -m analysis.input_amplitude --ckpt stereo=<ckpt baseline> --ckpt stereo_log1p=<ckpt log1p>
+uv run python -m src.evaluate CKPT -o outputs/eval_stereo_power_loss.json
+python -m analysis.compare_runs outputs/eval_stereo.json outputs/eval_stereo_power_loss.json --names stereo power_loss
+python -m analysis.input_amplitude --ckpt stereo=<ckpt baseline> --ckpt power_loss=<ckpt power_loss>
 ```
 
-Attendu (⚠ estimations, pas des mesures) : gain de SDR modeste (moins de 0,5 dB) pour `log1p` et `sqrt`, sans invariance au volume ; pour `norm`, invariance exacte au gain mais un gain de SDR incertain, la normalisation par fenetre de 6 s pouvant degrader les passages tres faibles. Si l'hypothese est infirmee, la BatchNorm suffit a absorber l'echelle et le probleme est surtout visible sur les morceaux tres faibles. Resultat : [TODO]{entrainer, evaluer et comparer}.
+Attendu (⚠ estimations, pas des mesures) : gain de SDR modeste (moins de 0,5 dB) pour `power_loss`, a confirmer sur de la musique ; pas d'invariance au volume pour les variantes `power`. Si l'hypothese est infirmee, cela voudrait dire que l'ecart de dynamique entre bins forts et faibles ne limite pas ce modele, ou que l'avantage observe en parole ne se transfere pas a la musique. Resultat : [TODO]{entrainer, evaluer et comparer}.
+
+**References**
+- S. Braun, I. Tashev, *A consolidated view of loss functions for supervised deep learning-based speech enhancement*, arXiv:2009.12286, 2020 ([arXiv](https://arxiv.org/abs/2009.12286)). Lu en entier ; la page arXiv ne donne pas de conference ni de revue, a completer avant de citer ailleurs.
+- K. Wilson, M. Chinen, J. Thorpe, B. Patton, J. Hershey, R. F. Saurous, J. Skoglund, R. F. Lyon, *Exploring Tradeoffs in Models for Low-latency Speech Enhancement*, arXiv:1811.07030, 2018 ([arXiv](https://arxiv.org/abs/1811.07030)). Lu en entier ; meme remarque sur la conference.
 
 ### 3. Changement de la loss

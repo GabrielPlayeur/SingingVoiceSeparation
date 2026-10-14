@@ -1,0 +1,11 @@
+# @package _global_
+# Baseline stéréo + loi de puissance c = 0,3 sur l'entrée ET dans la loss (la configuration de Wilson et al. 2018, sauf le masque,
+# qui reste appliqué à l'amplitude linéaire).
+data:
+  channels: 2
+model:
+  input_transform: power
+  input_power: 0.3
+  loss_power: 0.3
+wandb:
+  run_name: unet-stereo-power-both

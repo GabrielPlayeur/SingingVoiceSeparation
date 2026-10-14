@@ -1,0 +1,9 @@
+# @package _global_
+# Baseline stéréo + loi de puissance c = 0,3 sur l'ENTRÉE du réseau seulement (Wilson et al. 2018). Loss et masque inchangés.
+data:
+  channels: 2
+model:
+  input_transform: power
+  input_power: 0.3
+wandb:
+  run_name: unet-stereo-power-in

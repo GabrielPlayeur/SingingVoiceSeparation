@@ -5,3 +5,5 @@ n_fft: 2048
 hop_length: 512
 learning_rate: 0.001
 input_transform: none   # none | log1p | sqrt | norm
+input_power: 0.3        # exposant quand input_transform=power
+loss_power: 1.0         # exposant de compression de la loss (1.0 = L1 linéaire, baseline)

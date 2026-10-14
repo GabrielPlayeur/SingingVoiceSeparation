@@ -11,8 +11,8 @@ Deux figures :
 
 Usage :
     python -m analysis.input_amplitude [--ckpt mono=CKPT --ckpt stereo=CKPT ...] [--crops-per-track 5]
-Sans --ckpt, les deux baselines (mono ygdtir6a, stéréo fgvzjxua) sont utilisées si elles existent. Pour ajouter un modèle
-entraîné avec une compression d'entrée : --ckpt stereo_log1p=outputs/VoiceSeparation/<run>/checkpoints/<ckpt>.
+Sans --ckpt, la baseline stéréo (run fgvzjxua) est utilisée. Pour ajouter un modèle entraîné avec une compression d'entrée :
+--ckpt stereo_power_in=outputs/VoiceSeparation/<run>/checkpoints/<ckpt>.
 """
 import argparse
 import glob
@@ -32,7 +32,7 @@ from src.utils.utils import si_sdr
 from src.utils.input_transform import INPUT_TRANSFORMS, transform_amplitude
 
 GAINS_DB = [-18, -12, -6, -3, 0, 3, 6, 12, 18]
-DEFAULT_CKPTS = {"mono": "ygdtir6a", "stereo": "fgvzjxua"}
+DEFAULT_CKPTS = {"stereo": "fgvzjxua"}  # baseline stéréo (on ne travaille plus qu'en stéréo)
 LEVEL_BINS = np.linspace(-120, 60, 181)  # dB, pour l'histogramme des amplitudes
 
 
@@ -202,10 +202,10 @@ def main():
         json.dump({"gains_db": GAINS_DB, "input_shift": {k: {str(g): v for g, v in d.items()} for k, d in shifts.items()},
                    "models": results}, f, indent=1)
 
-    colors = {"mono": BLUE, "stereo": ORANGE}
-    palette = [BLUE, ORANGE, AQUA, INK_2]
+    colors = {"stereo": BLUE}  # baseline ; les autres modèles prennent la palette dans l'ordre
+    palette = [ORANGE, AQUA, INK_2, BLUE]
     # panneau (a) : une couleur par transformation, distincte du bleu/orange (= modèles mono/stéréo) des panneaux (b) et (c)
-    transform_style = {"none": (INK_2, "o"), "log1p": ("#eda100", "s"), "sqrt": ("#6250d6", "^"), "norm": (AQUA, "D")}
+    transform_style = {"none": (INK_2, "o"), "power": ("#e34948", "v"), "log1p": ("#eda100", "s"), "sqrt": ("#6250d6", "^"), "norm": (AQUA, "D")}
     fig, axes = plt.subplots(1, 3, figsize=(15.5, 4.6), constrained_layout=True)
     ax = axes[0]
     for k in INPUT_TRANSFORMS:
@@ -215,7 +215,7 @@ def main():
     ax.axhline(0, color=INK_2, linewidth=1)
     ax.set_xlabel("gain appliqué au morceau (dB)")
     ax.set_ylabel("décalage de l'entrée du réseau\n(en écarts-types de l'entrée à 0 dB)")
-    ax.set_title("(a) Ce que voit la BatchNorm selon la transformation")
+    ax.set_title("(a) Ce que voit la BatchNorm (power : c = 0,3)")
     ax.legend(title="input_transform")
 
     for ax, key, ylabel, title in ((axes[1], "si_sdr_gain_vs_0", "SI-SDR médian − SI-SDR à 0 dB (dB)", "(b) Qualité de séparation selon le gain"),
