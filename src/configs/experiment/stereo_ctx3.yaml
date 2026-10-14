@@ -1,0 +1,9 @@
+# @package _global_
+# Longueur de contexte : baseline stéréo (lr 1e-3 constant, loss L1 d'amplitude), seule la LONGUEUR DES EXTRAITS d'entraînement change :
+# crop_length = 130560 échantillons (2,96 s) au lieu de 261632 (5,93 s). Profondeur 6 inchangée : 130560/512 + 1 trames, multiple de 64
+# (assert_no_temporal_padding). Voir experiments/07_context_length.md.
+data:
+  channels: 2
+  crop_length: 130560
+wandb:
+  run_name: unet-stereo-ctx3

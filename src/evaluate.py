@@ -222,6 +222,9 @@ if __name__ == "__main__":
     parser.add_argument('-w', "--workers", type=int, default=None,
                         help="processus de calcul des métriques (0 = séquentiel ; défaut : selon la RAM disponible, ~2,5 Go chacun)")
     parser.add_argument("--oracle-cache", default="outputs/oracle_cache", help="dossier du cache de l'oracle ('' pour le désactiver)")
+    parser.add_argument("--crop-length", type=int, default=261632,
+                        help="longueur (en échantillons) des fenêtres d'inférence, multiple de 2**depth trames STFT ; défaut : celle de l'entraînement "
+                             "de la baseline (5,93 s). Sert à l'expérience sur la longueur de contexte.")
     args = parser.parse_args()
-    evaluate(args.ckpt, args.dataset_path, max_tracks=args.max_tracks, output_json=args.output_json,
+    evaluate(args.ckpt, args.dataset_path, crop_length=args.crop_length, max_tracks=args.max_tracks, output_json=args.output_json,
              with_oracle=not args.no_oracle, workers=args.workers, oracle_cache_dir=args.oracle_cache or None)

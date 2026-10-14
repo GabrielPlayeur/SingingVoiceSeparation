@@ -38,3 +38,13 @@ experiments:
   #        C'est ce qui permet de dire si +0,04 dB (stéréo − mono) et les écarts de 0,1-0,3 dB des autres expériences sont du bruit.
   - {name: stereo,       group: seeds, seeds: [42, 43, 44], overrides: ["experiment=stereo"]}
   - {name: mono,         group: seeds, seeds: [42, 43, 44], overrides: ["data.channels=1"]}
+
+  # --- 5. longueur de contexte (experiments/07_context_length.md) : seule la longueur des extraits d'entraînement change.
+  #        Le point 5,93 s est la baseline déjà faite (runs/loss-v1/baseline_s42), non relancée. Évaluation par défaut : fenêtres de 5,93 s
+  #        pour tous (même protocole d'inférence) ; l'évaluation à la longueur propre de chaque modèle se fait ensuite avec deploy/eval_crops.py.
+  #        ctx12_b4 = contrôle (batch 4, 252 extraits/époque) : même quantité d'audio par pas que la baseline.
+  #        Pas de 18 s ni 24 s : 4 morceaux d'entraînement durent moins de 20 s (12,9 s au plus court) et MUSDBTrainDataset exige morceau > extrait.
+  - {name: ctx3,         group: context, overrides: ["experiment=stereo_ctx3"]}
+  - {name: ctx9,         group: context, overrides: ["experiment=stereo_ctx9"]}
+  - {name: ctx12,        group: context, overrides: ["experiment=stereo_ctx12"]}
+  - {name: ctx12_b4,     group: context, overrides: ["experiment=stereo_ctx12_b4"]}
