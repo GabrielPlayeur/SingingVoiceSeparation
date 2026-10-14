@@ -4,3 +4,4 @@ depth: 6
 n_fft: 2048
 hop_length: 512
 learning_rate: 0.001
+input_transform: none   # none | log1p | sqrt | norm

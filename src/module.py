@@ -3,6 +3,7 @@ import torch.nn as nn
 import lightning as L
 from .models.unet import UNet
 from .utils.utils import si_sdr
+from .utils.input_transform import INPUT_TRANSFORMS, transform_amplitude
 
 class VoiceSeparationModule(L.LightningModule):
     def __init__(self, 
@@ -13,8 +14,11 @@ class VoiceSeparationModule(L.LightningModule):
                  learning_rate: float,
                  sr: int,
                  in_channels: int = 1,
+                 input_transform: str = "none",
                 ):
         super().__init__()
+        if input_transform not in INPUT_TRANSFORMS:
+            raise ValueError(f"input_transform={input_transform!r} inconnu, choisir parmi {INPUT_TRANSFORMS}")
         self.save_hyperparameters()
         self.model = UNet(base_channels=base_channels, depth=depth, in_channels=in_channels)
         self.register_buffer("window", torch.hann_window(n_fft))
@@ -54,8 +58,7 @@ class VoiceSeparationModule(L.LightningModule):
         return batch
 
     def forward(self, mix_amp):
-        # mix_amp : (B, C, F, T) -> masque (B, C, F, T)
-        return self.model(mix_amp)
+        return self.model(transform_amplitude(mix_amp, self.hparams.input_transform))
 
     def training_step(self, batch, batch_idx):
         mask = self.forward(batch["mix_amp"])

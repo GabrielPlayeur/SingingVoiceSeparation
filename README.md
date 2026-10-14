@@ -113,25 +113,72 @@ L'hypothese est confirmee en tendance : la voix est plus centree que l'accompagn
 
 l'ajout de ce second canal devrait permettre au modele d'utiliser cette information pour trouver des liens dans les frequences afin de mieux separer dans le masque.
 
-Resultats sur les 50 morceaux de test (`uv run python -m src.evaluate CKPT -o outputs/stereo.json`, puis `python -m analysis.compare_runs outputs/oracle_baseline.json outputs/stereo.json --names mono stereo`) :
+Les modeles sont evalues sur les 50 morceaux de test **dans les deux protocoles** (`uv run python -m src.evaluate CKPT -o outputs/eval_<nom>.json`) :
+- **mono** : references et estimation mixees en mono (moyenne L/R) ; pour le modele stereo, moyenne de ses deux sorties ;
+- **stereo** : references et estimation sur 2 canaux ; pour le modele mono, le modele est applique separement a L et a R.
 
-| | mono | stereo |
+Un premier resultat, ou la baseline mono evaluee en mono etait comparee au modele stereo evalue en stereo (4,70 contre 4,50 dB), laissait croire a une perte de 0,3 dB. C'etait en grande partie un effet de protocole : le meme modele mono passe de 4,70 a 4,51 dB quand on le note en stereo.
+
+| SDR median [IC95 % bootstrap] | modele mono | modele stereo | difference appariee stereo − mono |
+|---|---|---|---|
+| protocole mono | 4,70 dB [3,80 ; 5,92] | 4,89 dB [3,78 ; 5,70] | −0,06 dB [−0,35 ; +0,18], p = 0,44 |
+| protocole stereo | 4,51 dB [3,52 ; 5,47] | 4,50 dB [3,56 ; 5,38] | +0,04 dB [−0,18 ; +0,17], p = 0,89 |
+| SI-SDRi, protocole stereo | 9,29 dB | 9,31 dB | +0,03 dB [−0,13 ; +0,31], p = 0,45 |
+| oracle (protocole mono / stereo) | 9,21 / 9,09 dB | | |
+
+![mono vs stereo](figures/compare_mono_stereo_protocole_stereo.png)
+
+(protocole stereo, SDR, sans les 2 morceaux *PR* dont la voix est quasi inaudible ; avec les 50 morceaux la difference mediane est de +0,04 dB, sans eux de +0,05 dB)
+
+- **Le stereo n'apporte aucun gain mesurable, mais pas de perte non plus.** Les differences sont de l'ordre de 0,05 dB, tous les intervalles contiennent 0, et le stereo gagne sur 26 morceaux sur 50 : un pile ou face.
+- **L'indice spatial existe pourtant** (voix 9 a 12 dB plus centree que l'accompagnement, voir plus haut). Explication possible, non testee : le mixage mono garde le Mid, donc deja la voix centree, et retire une part plus grande de l'accompagnement (3 % de l'energie de la voix est dans le Side, contre 8,4 % pour l'accompagnement) ; le modele mono beneficie donc d'une partie de l'indice gratuitement. Une autre possibilite, egalement non testee : le modele ne recoit que l'amplitude de L et R, donc pas la difference de phase, et doit retrouver « L ≈ R » avec sa premiere convolution (2 → 16 canaux). Un signal Mid/Side (ou un masque unique applique au Mid) donnerait l'indice directement : piste suivante possible.
+- **Precautions** : une seule graine par configuration (on ne connait pas la variabilite entre deux entrainements, voir `docs/ROADMAP.md`, etape 0), donc des differences de l'ordre de 0,1 a 0,3 dB ne sont pas interpretables. Les intervalles ne mesurent que la variabilite entre morceaux.
+- **Nouvelle baseline pour les iterations suivantes : le modele stereo, evalue en protocole stereo** (SDR median 4,50 dB, oracle 9,09 dB, ecart a l'oracle 4,59 dB), qui est le protocole de la litterature (BSSEval stereo). Les comparaisons se font toujours entre checkpoints evalues dans le meme protocole, avec `python -m analysis.compare_runs outputs/eval_stereo.json outputs/eval_<nom>.json --metric sdr_stereo`. Les chiffres restent non comparables a ceux des papiers (MUSDB18 compresse, melange reconstruit, SDR sur fenetres de 1 s).
+
+### 2. Compression de l'amplitude en entree
+
+**Hypothese.** Monter ou baisser le volume d'un morceau ne devrait pas changer le masque, donc la separation. Or le reseau recoit |X| brut, sans aucune normalisation, et sa BatchNorm utilise en inference des statistiques glissantes figees : le masque depend du niveau absolu du morceau. Une compression de l'entree (`log1p(|X|)` ou `|X|^0,5`, le masque restant applique a l'amplitude lineaire) devrait reduire cette dependance et rendre les bins faibles plus visibles pour le reseau.
+
+**Ce que recoit le reseau** (`python -m analysis.input_amplitude`, 80 extraits de validation et 100 morceaux) :
+
+![amplitudes d'entree](figures/input_amplitude_levels.png)
+
+- La mediane de |X| est de 0,059 et le 99,9e percentile de 47 (maximum 263) : **58 dB de dynamique** entre la mediane et le 99,9e percentile, 73 dB jusqu'au maximum. 87 % des bins sont sous 1, zone ou `log1p(|X|) ≈ |X|` : **`log1p` ne comprime donc que les 13 % de bins forts** et laisse presque intacte la majorite de l'entree, alors que `sqrt` comprime tout.
+- 22,8 % des bins sont quasi vides (|X| < 1e-3) : c'est la coupure de l'encodage AAC, qui commence vers 16 kHz (courbe de droite).
+- **Les morceaux different de 10 dB de volume** entre le 10e et le 90e percentile (de −19 a +4 dB pour le niveau moyen de |X|) : le reseau voit en pratique des gains de plusieurs dB d'un morceau a l'autre.
+- La loss L1 sur l'amplitude lineaire est dominee par les graves (niveau moyen jusqu'a +27 dB contre −80 dB au-dessus de 16 kHz).
+
+**Le modele actuel est-il sensible au volume ?** Oui. On multiplie le melange par un gain, puis on mesure le SI-SDR de validation (invariant a l'echelle de la sortie : seul le masque compte) et l'ecart du masque par rapport au gain 0 dB, pour les deux baselines :
+
+![sensibilite au gain](figures/input_gain_sensitivity.png)
+
+| gain applique | −18 dB | −12 dB | −6 dB | +6 dB | +12 dB | +18 dB |
+|---|---|---|---|---|---|---|
+| Δ SI-SDR, baseline mono | −6,36 | −3,13 | −0,54 | −0,33 | −0,88 | −1,39 |
+| Δ SI-SDR, baseline stereo | −2,64 | −0,99 | −0,15 | −0,35 | −0,99 | −1,32 |
+| ecart moyen du masque | 0,17 | 0,12 | 0,06 | 0,06 | 0,12 | 0,17 |
+
+- Le masque change avec le volume (ecart de 0,06 pour ±6 dB, 0,12 pour ±12 dB) et **la valeur moyenne du masque monte avec le gain** (de 0,33 a 0,42 pour la baseline mono entre −6 et +12 dB) : le reseau laisse passer plus de signal quand le morceau est plus fort.
+- La perte est faible dans la plage normale (≤ 0,55 dB pour ±6 dB), donc comparable a l'incertitude de nos comparaisons, mais elle devient franche pour les morceaux tres faibles : −3,1 dB a −12 dB pour la baseline mono, −1,0 dB pour la stereo. Elle est dissymetrique : baisser le volume coute plus que le monter.
+- **Une compression ne rend pas l'entree invariante au volume** : panneau (a), le decalage de l'entree du reseau sous +6 dB vaut 0,23 ecart-type sans transformation, 0,26 avec `log1p` et 0,26 avec `sqrt`. C'est ce decalage que la BatchNorm en inference ne sait pas absorber. Seule une normalisation par extrait (`norm` : |X| divise par sa moyenne) annule le decalage (0,00). Si `log1p` ou `sqrt` ameliorent le SDR, ce sera donc plutot par la reduction de la dynamique que par l'invariance au volume.
+
+**Experiences** (une seule variable change par rapport a la baseline stereo, `model.input_transform`, voir `src/utils/input_transform.py`) :
+
+| config | entree du reseau | commande |
 |---|---|---|
-| SDR median (IC95 % bootstrap) | 4,70 dB [3,80 ; 5,92] | 4,50 dB [3,56 ; 5,38] |
-| SI-SDRi median | 10,03 dB [8,80 ; 10,60] | 9,31 dB [8,41 ; 10,65] |
-| SDR median oracle | 9,21 dB | 9,09 dB |
-| ecart oracle − modele (SDR median) | 4,32 dB | 4,59 dB |
+| baseline | \|X\| | `uv run python -m src.train experiment=stereo` (deja faite) |
+| log1p | log(1 + \|X\|) | `uv run python -m src.train experiment=stereo_log1p` |
+| sqrt | \|X\|^0,5 | `uv run python -m src.train experiment=stereo_sqrt` |
+| norm | \|X\| / moyenne par extrait de 6 s | `uv run python -m src.train experiment=stereo_norm` |
 
-![mono vs stereo](figures/compare_mono_stereo_sans_exclus.png)
+Evaluation et comparaison a la baseline stereo, puis mesure de la sensibilite au volume du nouveau checkpoint :
 
-(figure sans les 2 morceaux *PR*, voir plus bas)
+```
+uv run python -m src.evaluate CKPT -o outputs/eval_stereo_log1p.json
+python -m analysis.compare_runs outputs/eval_stereo.json outputs/eval_stereo_log1p.json --names stereo log1p --metric sdr_stereo
+python -m analysis.input_amplitude --ckpt stereo=<ckpt baseline> --ckpt stereo_log1p=<ckpt log1p>
+```
 
-- **L'hypothese n'est pas confirmee : le stereo n'ameliore pas la separation, il est legerement moins bon.** Difference appariee stereo − mono : **−0,30 dB** de SDR median (IC95 % [−0,52 ; −0,09], Wilcoxon p = 0,019), et **−0,52 dB** de SI-SDRi median (IC95 % [−0,70 ; −0,31]). Le stereo n'est meilleur que sur 18 morceaux sur 50 en SDR (15 sur 50 en SI-SDRi).
-- **L'effet est petit et fragile.** Sans les deux morceaux *PR* (voix quasi inaudible, SDR peu interpretable, *Happy Daze* passe de −16,4 a −27,7 dB et pese seul sur la moyenne), la difference mediane est de −0,26 dB avec un IC95 % [−0,46 ; +0,02] et p = 0,049 : on ne peut pas exclure un effet nul. Il n'y a aucun gain, mais pas non plus une perte nette.
-- **L'ecart a l'oracle va dans le meme sens** : 4,59 dB en stereo contre 4,32 dB en mono, donc le stereo est un peu plus loin de son propre plafond.
-- **Precautions avant de conclure :**
-  - Une seule graine par configuration : on ne connait pas la variabilite entre deux entrainements identiques (voir `docs/ROADMAP.md`, etape 0). L'IC95 % ci-dessus ne mesure que la variabilite entre morceaux.
-  - Les deux evaluations ne sont pas exactement le meme protocole : la baseline est evaluee en mono (SDR sur 1 canal), le modele stereo en stereo (SDR museval sur 2 canaux). L'oracle lui-meme change de 0,25 dB en median entre les deux (de −1,7 a +2,7 dB selon le morceau), donc une partie de la difference peut venir de la mesure et pas du modele. Il faudrait evaluer la sortie du modele stereo mixee en mono pour comparer a conditions egales (pas encore fait).
-  - Ce n'est pas teste, mais le resultat est coherent avec le fait que le modele ne recoit que l'amplitude de L et de R : la difference de phase entre canaux est perdue, et l'indice « centre » (L ≈ R) doit etre retrouve par la premiere convolution (2 → 16 canaux) alors qu'un signal Mid/Side le donnerait directement. Piste a tester ensuite : entree Mid/Side a la place de L/R, ou un seul masque applique au Mid.
+Attendu (⚠ estimations, pas des mesures) : gain de SDR modeste (moins de 0,5 dB) pour `log1p` et `sqrt`, sans invariance au volume ; pour `norm`, invariance exacte au gain mais un gain de SDR incertain, la normalisation par fenetre de 6 s pouvant degrader les passages tres faibles. Si l'hypothese est infirmee, la BatchNorm suffit a absorber l'echelle et le probleme est surtout visible sur les morceaux tres faibles. Resultat : [TODO]{entrainer, evaluer et comparer}.
 
-### 2. Changement de la loss
+### 3. Changement de la loss

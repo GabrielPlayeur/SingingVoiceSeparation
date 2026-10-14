@@ -1,0 +1,8 @@
+# @package _global_
+# Baseline stéréo + compression de l'amplitude d'entrée (ROADMAP 2a) : seule variable changée = model.input_transform
+data:
+  channels: 2
+model:
+  input_transform: log1p
+wandb:
+  run_name: unet-stereo-log1p
