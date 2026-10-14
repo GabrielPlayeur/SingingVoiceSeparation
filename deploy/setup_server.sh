@@ -58,9 +58,11 @@ else
         cd "$SERVER_REPO"
         uv export --frozen --no-hashes --no-emit-project -o "$req" >/dev/null
         uv venv --allow-existing .venv
-        extra=(--extra-index-url "$TORCH_INDEX")
-        if [ -n "$TORCH_FIND_LINKS" ]; then extra=(--find-links "$TORCH_FIND_LINKS"); fi
-        uv pip install --python .venv/bin/python -r "$req" --index-url "$PYPI_MIRROR" "${extra[@]}" --index-strategy unsafe-best-match
+        pip_install() { uv pip install --python .venv/bin/python -r "$req" --index-url "$PYPI_MIRROR" "$@" --index-strategy unsafe-best-match; }
+        if [ -z "$TORCH_FIND_LINKS" ] || ! pip_install --find-links "$TORCH_FIND_LINKS"; then
+            log "miroir torch indisponible ou non utilisé : repli sur $TORCH_INDEX (plus lent)"
+            pip_install --extra-index-url "$TORCH_INDEX"
+        fi
     ) || { rm -f "$req"; die "installation via miroir échouée (miroir injoignable ? espace disque : df -h /) ; relancer : les roues déjà reçues sont en cache"; }
     rm -f "$req"
 fi
