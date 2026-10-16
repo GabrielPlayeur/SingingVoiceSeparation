@@ -41,7 +41,52 @@ Seed 42, early stopping off, validation on the 16 validation tracks, last checkp
 
 ## Results
 
-*To be filled when the curves are fetched. The numbers will be pasted from `figures/convergence_budget.json`; nothing above will be edited.*
+Probe finished on 16 Oct 2026 (tag `probe-v1`, 4 runs in parallel; training time 160 min per w16 run, 196 min per w32 run). One seed, validation only: no test number has been computed.
+
+```bash
+uv run python -m analysis.convergence budget --run w16_aug=outputs/server/probe-v1/probe_w16_aug_s42 --run w32_aug=outputs/server/probe-v1/probe_w32_aug_s42
+uv run python -m analysis.convergence plot --budget 1000 --run w16=... --run w16_aug=... --run w32=... --run w32_aug=...
+```
+
+![convergence probe](../figures/convergence.png)
+
+**What the frozen rule gives** (`figures/convergence_budget.json`):
+
+| run | first crossing below 0.05 dB / 100 epochs | B of the run | largest smoothed gain after the crossing |
+|---|---|---|---|
+| w16 | epoch 294 | 300 | +0.15 dB / 100 ep |
+| **w16_aug** | epoch 567 | **600** | **+0.18 dB / 100 ep** |
+| w32 | epoch 315 | 400 | +0.20 dB / 100 ep |
+| **w32_aug** | epoch 389 | 400 | **+0.29 dB / 100 ep** |
+
+The rule gives **B = 600** (the largest of w16_aug and w32_aug).
+
+**Validation along the runs** (`val/si_sdr_median`, mean ± std of the 10 epochs ending at the given epoch):
+
+| epoch | 150 | 300 | 400 | 600 | 800 | 1000 |
+|---|---|---|---|---|---|---|
+| w16 | 3.90 ± 0.12 | 4.23 ± 0.14 | 4.33 ± 0.13 | 4.40 ± 0.06 | 4.50 ± 0.06 | 4.50 ± 0.07 |
+| w16_aug | 3.47 ± 0.10 | 3.90 ± 0.23 | 4.17 ± 0.17 | 4.42 ± 0.15 | 4.70 ± 0.12 | 4.74 ± 0.09 |
+| w32 | 4.25 ± 0.17 | 4.52 ± 0.11 | 4.67 ± 0.11 | 4.76 ± 0.09 | 4.77 ± 0.07 | 4.76 ± 0.10 |
+| w32_aug | 3.54 ± 0.16 | 4.26 ± 0.15 | 4.62 ± 0.14 | 4.89 ± 0.14 | 5.13 ± 0.10 | 5.23 ± 0.07 |
+
+Gap between validation and training loss (mean of the last 10 epochs) at epochs 150 / 600 / 1000: w16 0.018 / 0.028 / 0.032, w32 0.020 / 0.033 / 0.037, w16_aug 0.061 / 0.056 / 0.056, w32_aug 0.061 / 0.055 / 0.056 (the augmented ones are measured on augmented training data: compare within a run only).
+
+### Decision: B = 1000, against the rule
+
+The check written above ("the script prints the largest gain after the crossing as a check") fails: after their first crossing, the two augmented curves rise again by up to 0.18 and 0.29 dB per 100 epochs, four to six times the tolerance. Between epochs 600 and 1000 they still gain +0.32 dB (w16_aug) and +0.34 dB (w32_aug), while the plain runs are flat (+0.10 and 0.00). The first crossing was a noise dip, the failure mode this page already named ("can be early by up to a hundred epochs"), but here by 400 epochs.
+
+B = 600 would compare the recipes on augmented models that are still about 0.3 dB short of their plateau: at epoch 600, w16_aug and w16 are equal (4.42 against 4.40), at epoch 1000 w16_aug is ahead by 0.24 dB. Phase 2 would then conclude that augmentation does nothing for the very reason this re-run exists (comparing models that have not finished training). **I take B = 1000**, the length of the probe, which is also what this page prescribes for curves still rising at the end. This is a deviation from the frozen rule, decided after seeing the curves; the numbers above are what it rests on. Cost: phase 2 grows from about 4 h to about 6.7 h of machine time.
+
+### Hypotheses
+
+1. **Without augmentation, validation flattens then goes down: half confirmed.** It flattens (w32 around epoch 500, w16 around epoch 700) but does not go down up to epoch 1000. The loss gap grows a little (w16 0.018 → 0.032), so there is mild overfitting on the loss, none on the SI-SDR.
+2. **With augmentation the curve rises for longer: confirmed.** +0.32 / +0.34 dB between epochs 600 and 1000, against +0.10 / 0.00 without.
+3. **Augmentation could not help at 150 epochs: confirmed, and stronger than stated.** At epoch 150 it *costs* 0.43 dB (w16) and 0.71 dB (w32); at epoch 1000 it gains 0.24 dB and 0.47 dB. The ranking flips with the budget, which is what the 150-epoch results of 02 to 07 could not see.
+
+Also visible, to be confirmed with seeds: the 150-epoch baseline is far from its plateau (w16: 3.90 → 4.50 dB), and the gain of w32 over w16 shrinks without augmentation (+0.35 → +0.26 dB) but grows with it (+0.07 → +0.49 dB), the H2 of [06](06_size_quality.md) and of the phase-3 plan.
+
+One seed per curve: the within-run standard deviation of the 10-epoch window is about 0.1 dB, the seed-to-seed spread is not known yet (phase 2 measures it).
 
 ## What's left
 
