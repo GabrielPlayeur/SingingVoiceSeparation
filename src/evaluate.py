@@ -102,7 +102,7 @@ def score_track(task):
 
 def evaluate(checkpoint_path, dataset_path, crop_length=261632, batch_size=16, max_tracks=None, logger=None, output_json=None,
              with_oracle=True, workers=None, oracle_cache_dir="outputs/oracle_cache", module=None, accelerator="auto",
-             mixture="sum", separate_fn=None, sr=44100):
+             mixture="sum", separate_fn=None, sr=44100, partial_path=None):
     """Evaluates a checkpoint on the test set, always in STEREO: references and estimate on 2 channels (museval v4 SDR
     on 2 channels), the protocol of the literature. A mono model (old checkpoint) is applied separately to L then to R.
 
@@ -112,6 +112,9 @@ def evaluate(checkpoint_path, dataset_path, crop_length=261632, batch_size=16, m
 
     `workers`: processes computing the metrics (0 = in the main process, None = according to the available RAM, see
     `default_workers`). Each needs about 2.5 GB, more for a track longer than 6 min.
+
+    `partial_path`: JSON-lines file where each finished track is appended; if it exists, those tracks are skipped (resumes an
+    interrupted run: the scores otherwise exist only in memory until the end). Use one file per configuration.
 
     `separate_fn`: external model (e.g. Open-Unmix, src/evaluate_umx.py), function (2, T) -> (2, T) returning the estimated vocals at
     `sr`; it then replaces the checkpoint, and the oracle is disabled (it is tied to the U-Net's STFT)."""
@@ -144,6 +147,14 @@ def evaluate(checkpoint_path, dataset_path, crop_length=261632, batch_size=16, m
     required = list(metrics) + ([m + "_oracle" for m in metrics] if with_oracle else [])
     completed = set()
     bar = tqdm(total=n_tracks, desc="Evaluation", unit="track")
+    if partial_path and os.path.exists(partial_path):  # resume: tracks already scored by an interrupted run are skipped
+        with open(partial_path) as f:
+            done = {rec["track"]: rec for rec in map(json.loads, f)}
+        for i, r in enumerate(results):
+            if r["track"] in done:
+                r.update(done[r["track"]])
+                completed.add(i)
+                bar.update(1)
 
     def collect(index, part):
         r = results[index]
@@ -154,6 +165,9 @@ def evaluate(checkpoint_path, dataset_path, crop_length=261632, batch_size=16, m
         if index not in completed and all(k in r for k in required):
             completed.add(index)
             bar.update(1)
+            if partial_path:
+                with open(partial_path, "a") as f:
+                    f.write(json.dumps(r) + "\n")
             bar.set_postfix(median_SDR=f"{np.nanmedian([results[i]['sdr'] for i in completed]):.2f} dB")
 
     pool = None
@@ -178,6 +192,8 @@ def evaluate(checkpoint_path, dataset_path, crop_length=261632, batch_size=16, m
     try:
         with tempfile.TemporaryDirectory(prefix="eval_est_") as tmp:
             for i in range(n_tracks):
+                if i in completed:
+                    continue
                 stereo_mix = test_dataset[i]["mixture"]  # (2, T)
                 base = dict(track_dir=track_dirs[i], sr=sr, mixture=mixture)
                 if with_oracle:
