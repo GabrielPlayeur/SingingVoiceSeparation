@@ -1,0 +1,23 @@
+{
+  "B": 600,
+  "runs": {
+    "w16_aug": {
+      "B": 600,
+      "epoch0": 566,
+      "rising": false,
+      "max_gain_after": 0.17985868453979492
+    },
+    "w32_aug": {
+      "B": 400,
+      "epoch0": 388,
+      "rising": false,
+      "max_gain_after": 0.28711577653884923
+    }
+  },
+  "rule": {
+    "smooth": 20,
+    "horizon": 100,
+    "tol": 0.05,
+    "step": 100
+  }
+}

@@ -59,7 +59,7 @@ experiments:
   # --- 7. recipe (phase 2): augmentation x lr end-decay at the fixed budget B, 3 seeds. Replace <B> (output of
   #        `python -m analysis.convergence budget`) before tagging. Seed 42 of the constant-lr cells is the probe run read at
   #        epoch B (analysis.convergence at/decide), so only seeds 43-44 are trained for them. Launch with --parallel 4.
-  - {name: r_const,     group: recipe, ckpt: last, seeds: [43, 44],     overrides: ["experiment=probe_w16",     "training.max_epochs=<B>", "training.checkpoint_every_n_epochs=null"]}
-  - {name: r_const_aug, group: recipe, ckpt: last, seeds: [43, 44],     overrides: ["experiment=probe_w16_aug", "training.max_epochs=<B>", "training.checkpoint_every_n_epochs=null"]}
-  - {name: r_wsd,       group: recipe, ckpt: last, seeds: [42, 43, 44], overrides: ["experiment=probe_w16",     "training.max_epochs=<B>", "training.checkpoint_every_n_epochs=null", "model.scheduler=wsd"]}
-  - {name: r_wsd_aug,   group: recipe, ckpt: last, seeds: [42, 43, 44], overrides: ["experiment=probe_w16_aug", "training.max_epochs=<B>", "training.checkpoint_every_n_epochs=null", "model.scheduler=wsd"]}
+  - {name: r_const,     group: recipe, ckpt: last, seeds: [43, 44],     overrides: ["experiment=probe_w16",     "training.max_epochs=1000", "training.checkpoint_every_n_epochs=null"]}
+  - {name: r_const_aug, group: recipe, ckpt: last, seeds: [43, 44],     overrides: ["experiment=probe_w16_aug", "training.max_epochs=1000", "training.checkpoint_every_n_epochs=null"]}
+  - {name: r_wsd,       group: recipe, ckpt: last, seeds: [42, 43, 44], overrides: ["experiment=probe_w16",     "training.max_epochs=1000", "training.checkpoint_every_n_epochs=null", "model.scheduler=wsd"]}
+  - {name: r_wsd_aug,   group: recipe, ckpt: last, seeds: [42, 43, 44], overrides: ["experiment=probe_w16_aug", "training.max_epochs=1000", "training.checkpoint_every_n_epochs=null", "model.scheduler=wsd"]}
