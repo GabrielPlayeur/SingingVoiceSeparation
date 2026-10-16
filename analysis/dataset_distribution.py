@@ -1,7 +1,7 @@
-"""Répartition de MUSDB18 (genre, origine, artiste, durée) par sous-ensemble train / val / test.
+"""Distribution of MUSDB18 (genre, origin, artist, duration) per train / val / test subset.
 
-Usage : python -m analysis.dataset_distribution
-Sorties : figures/dataset_distribution.png, figures/dataset_artists.png + tableau texte.
+Usage: python -m analysis.dataset_distribution
+Outputs: figures/dataset_distribution.png, figures/dataset_artists.png + text table.
 """
 from collections import Counter
 
@@ -23,15 +23,15 @@ def main():
     colors = {"train": BLUE, "val": AQUA, "test": ORANGE}
 
     names = {s: [name_of(d) for d in dirs[s]] for s in subsets}
-    missing = [n for s in subsets for n in names[s] if meta[n]["genre"] == "Inconnu"]
+    missing = [n for s in subsets for n in names[s] if meta[n]["genre"] == "Unknown"]
     if missing:
-        print("Sans métadonnées dans le README MUSDB :", missing)
+        print("No metadata in the MUSDB README:", missing)
 
     durations = {s: np.array([sf.info(f"{d}/mixture.wav").duration for d in dirs[s]]) / 60 for s in subsets}
     for s in subsets:
-        print(f"{s:5s} {len(names[s]):3d} morceaux, {durations[s].sum():5.1f} min au total, médiane {np.median(durations[s]):.2f} min")
+        print(f"{s:5s} {len(names[s]):3d} tracks, {durations[s].sum():5.1f} min in total, median {np.median(durations[s]):.2f} min")
 
-    # --- genres et origines
+    # --- genres and origins
     genres = sorted({meta[n]["genre"] for s in subsets for n in names[s]}, key=lambda g: -sum(meta[n]["genre"] == g for s in subsets for n in names[s]))
     origins = sorted({meta[n]["origin"] for s in subsets for n in names[s]})
     fig, axes = plt.subplots(1, 3, figsize=(14, 4.2), gridspec_kw={"width_ratios": [3, 1.6, 1.6]}, constrained_layout=True)
@@ -48,7 +48,7 @@ def main():
     for yi, tot in zip(y, left):
         ax.text(tot + 0.5, yi, int(tot), va="center", color=INK_2, fontsize=9)
     ax.set_title("Genre")
-    ax.set_xlabel("morceaux")
+    ax.set_xlabel("tracks")
     ax.legend(loc="center right")
 
     ax = axes[1]
@@ -61,28 +61,28 @@ def main():
     ax.set_yticks(y, [SHORT_ORIGIN.get(o, o) for o in origins])
     ax.invert_yaxis()
     ax.set_title("Origine")
-    ax.set_xlabel("morceaux")
+    ax.set_xlabel("tracks")
 
     ax = axes[2]
     bins = np.linspace(0, max(d.max() for d in durations.values()) + 0.5, 14)
     for s in subsets:
         ax.hist(durations[s], bins=bins, histtype="step", linewidth=2, color=colors[s], label=s, density=True)
-    ax.set_title("Durée des morceaux")
+    ax.set_title("Track duration")
     ax.set_xlabel("minutes")
-    ax.set_ylabel("densité")
-    fig.suptitle("MUSDB18 : répartition des morceaux dans les sous-ensembles", fontweight="bold")
+    ax.set_ylabel("density")
+    fig.suptitle("MUSDB18: distribution of the tracks across the subsets", fontweight="bold")
     save(fig, "dataset_distribution.png")
 
-    # --- artistes partagés entre sous-ensembles (fuite potentielle, B6 du walkthrough)
+    # --- artists shared between subsets (potential leakage, B6 of the walkthrough)
     art = {s: Counter(artist(n) for n in names[s]) for s in subsets}
     shared_train_test = sorted(set(art["train"]) & set(art["test"]))
     shared_train_val = sorted(set(art["train"]) & set(art["val"]))
     shared_val_test = sorted(set(art["val"]) & set(art["test"]))
-    print("Artistes train/test partagés :", shared_train_test)
-    print("Artistes train/val partagés :", shared_train_val)
-    print("Artistes val/test partagés :", shared_val_test)
+    print("Artists shared by train/test:", shared_train_test)
+    print("Artists shared by train/val:", shared_train_val)
+    print("Artists shared by val/test:", shared_val_test)
     n_test_leak = sum(art["test"][a] for a in shared_train_test)
-    print(f"Morceaux de test dont l'artiste est dans le train : {n_test_leak}/{len(names['test'])}")
+    print(f"Test tracks whose artist is in the train set: {n_test_leak}/{len(names['test'])}")
 
     allart = Counter()
     for s in subsets:
@@ -97,12 +97,12 @@ def main():
         left += c
     ax.set_yticks(y, top)
     ax.invert_yaxis()
-    ax.set_xlabel("morceaux")
-    ax.set_title(f"Artistes les plus représentés ({len(allart)} artistes au total)")
+    ax.set_xlabel("tracks")
+    ax.set_title(f"Most represented artists ({len(allart)} artists in total)")
     ax.legend(loc="lower right")
     save(fig, "dataset_artists.png")
 
-    # --- tableau genre x sous-ensemble en pourcentage, pour le README
+    # --- genre x subset table as a percentage, for the README
     print("\nGenre            " + "  ".join(f"{s:>6s}" for s in subsets))
     for g in genres:
         row = [100 * sum(meta[n]["genre"] == g for n in names[s]) / len(names[s]) for s in subsets]

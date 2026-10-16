@@ -1,15 +1,15 @@
-"""Comparaison des runs d'optimisation de la baseline (learning rate, scheduler) à partir de l'historique W&B.
+"""Comparison of the baseline's optimisation runs (learning rate, scheduler) from the W&B history.
 
-Critère de choix (sur la VALIDATION, jamais sur le test) : moyenne de `val/si_sdr_median` sur les 10 DERNIÈRES époques. Le maximum
-(utilisé pour le checkpoint) récompense une époque chanceuse quand la courbe oscille ; la moyenne finale mesure ce que le run
-délivre réellement. L'écart-type sur ces 10 époques donne l'ordre de grandeur du bruit : en dessous, deux runs ne se
-distinguent pas (une seule graine par run).
+Selection criterion (on the VALIDATION set, never on the test set): mean of `val/si_sdr_median` over the LAST 10 epochs. The maximum
+(used for the checkpoint) rewards a lucky epoch when the curve oscillates; the final mean measures what the run
+actually delivers. The standard deviation over these 10 epochs gives the order of magnitude of the noise: below it, two runs cannot
+be told apart (a single seed per run).
 
-Usage : python -m analysis.lr_schedule --run stereo=fgvzjxua --run lr3e4=<id W&B> --run cosine=<id> --run lr3e4_cosine=<id>
-L'id est celui du dossier outputs/VoiceSeparation/<id>/ (ou de l'URL du run W&B). Sans --run : la baseline seule.
-Un run du serveur jamais synchronisé (W&B hors ligne) se lit directement depuis son fichier : --run lr3e4=chemin/run-<id>.wandb
-(lecture locale du journal binaire W&B, rien n'est envoyé).
-Sorties : figures/lr_schedule.png, figures/lr_schedule.json
+Usage: python -m analysis.lr_schedule --run stereo=fgvzjxua --run lr3e4=<W&B id> --run cosine=<id> --run lr3e4_cosine=<id>
+The id is the one of the outputs/VoiceSeparation/<id>/ folder (or of the W&B run URL). Without --run: the baseline alone.
+A server run that was never synced (offline W&B) is read directly from its file: --run lr3e4=path/run-<id>.wandb
+(local reading of the binary W&B log, nothing is sent).
+Outputs: figures/lr_schedule.png, figures/lr_schedule.json
 """
 import argparse
 import json
@@ -23,13 +23,13 @@ from ._common import *
 
 PROJECT = "playeur-audio-team/VoiceSeparation"
 METRIC = "val/si_sdr_median"
-LAST = 10  # nombre d'époques du critère de choix
+LAST = 10  # number of epochs of the selection criterion
 COLORS = [BLUE, ORANGE, AQUA, INK_2, "#8a5fd1"]
 
 
 def _wandb_records(path):
-    """Enregistrements protobuf d'un journal W&B hors ligne (format LevelDB : en-tête de 7 octets, blocs de 32 768 octets,
-    chaque enregistrement précédé de crc(4) + longueur(2) + type(1) ; 1 = complet, 2/3/4 = début/milieu/fin)."""
+    """Protobuf records of an offline W&B log (LevelDB format: 7-byte header, 32,768-byte blocks,
+    each record preceded by crc(4) + length(2) + type(1); 1 = full, 2/3/4 = start/middle/end)."""
     data = open(path, "rb").read()
     block, pos, buf = 32768, 7, b""
     while pos < len(data):
@@ -87,7 +87,7 @@ def summarize(epochs, y):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--run", action="append", default=[], metavar="NOM=ID_WANDB")
+    ap.add_argument("--run", action="append", default=[], metavar="NAME=WANDB_ID")
     args = ap.parse_args()
     setup_style()
     runs = dict(r.split("=", 1) for r in args.run) or {"stereo": "fgvzjxua"}
@@ -98,28 +98,28 @@ def main():
         results[name] = summarize(epochs, y) | {"wandb_run": run_id}
         curves[name] = (epochs, y)
         r = results[name]
-        print(f"{name:14s} ({wandb_name}) {r['epochs']:3d} époques | meilleur {r['best']:.2f} dB (époque {r['best_epoch']}) | "
-              f"moyenne des {LAST} dernières {r['last_mean']:.2f} ± {r['last_std']:.2f} dB | bruit époque-à-époque {r['epoch_to_epoch_std']:.2f} dB")
+        print(f"{name:14s} ({wandb_name}) {r['epochs']:3d} epochs | best {r['best']:.2f} dB (epoch {r['best_epoch']}) | "
+              f"mean of the last {LAST} {r['last_mean']:.2f} ± {r['last_std']:.2f} dB | epoch-to-epoch noise {r['epoch_to_epoch_std']:.2f} dB")
     if len(results) > 1:
         ranked = sorted(results, key=lambda n: -results[n]["last_mean"])
         best = ranked[0]
-        print(f"\nCritère (moyenne des {LAST} dernières époques) : " + " > ".join(f"{n} {results[n]['last_mean']:.2f}" for n in ranked))
+        print(f"\nCriterion (mean of the last {LAST} epochs): " + " > ".join(f"{n} {results[n]['last_mean']:.2f}" for n in ranked))
         for n in ranked[1:]:
             gap = results[best]["last_mean"] - results[n]["last_mean"]
             noise = max(results[best]["last_std"], results[n]["last_std"])
-            print(f"  {best} - {n} : {gap:.2f} dB (bruit {noise:.2f} dB) -> {'écart au-dessus du bruit' if gap > noise else 'non distinguable'}")
+            print(f"  {best} - {n}: {gap:.2f} dB (noise {noise:.2f} dB) -> {'gap above the noise' if gap > noise else 'not distinguishable'}")
 
     fig, (ax, bx) = plt.subplots(1, 2, figsize=(12, 4.6), constrained_layout=True, gridspec_kw={"width_ratios": [2.2, 1]})
     for i, (name, (epochs, y)) in enumerate(curves.items()):
         c = COLORS[i % len(COLORS)]
         ax.plot(epochs, y, color=c, alpha=0.25, linewidth=1)
         k = min(LAST, len(y))
-        smooth = np.convolve(y, np.ones(k) / k, mode="valid")  # moyenne glissante sur LAST époques
+        smooth = np.convolve(y, np.ones(k) / k, mode="valid")  # rolling mean over LAST epochs
         ax.plot(epochs[k - 1:], smooth, color=c, linewidth=2, label=f"{name} (fin : {results[name]['last_mean']:.2f} dB)")
-    ax.set_xlabel("époque")
+    ax.set_xlabel("epoch")
     ax.set_ylabel("val/si_sdr_median (dB)")
-    ax.set_title(f"Validation par époque (trait fin : brut, épais : moyenne glissante sur {LAST})")
-    ax.set_ylim(2.0, 4.3)  # les premières époques (de -4 à 2 dB) écrasent l’échelle ; la comparaison se joue au-dessus de 2 dB
+    ax.set_title(f"Validation per epoch (thin line: raw, thick: rolling mean over {LAST})")
+    ax.set_ylim(2.0, 4.3)  # the first epochs (from -4 to 2 dB) squash the scale; the comparison is played out above 2 dB
     ax.legend(loc="lower right")
 
     order = sorted(results, key=lambda n: results[n]["last_mean"])
@@ -130,8 +130,8 @@ def main():
         bx.text(results[n]["last_mean"] + results[n]["last_std"] + 0.03, p_, f"{results[n]['last_mean']:.2f}", va="center", fontsize=9)
     bx.set_yticks(pos, order)
     bx.set_xlim(min(results[n]["last_mean"] for n in order) - 0.4, max(results[n]["last_mean"] for n in order) + 0.35)
-    bx.set_xlabel(f"moyenne des {LAST} dernières époques ± écart-type (dB)")
-    bx.set_title("Critère de choix")
+    bx.set_xlabel(f"mean of the last {LAST} epochs ± standard deviation (dB)")
+    bx.set_title("Selection criterion")
     bx.grid(axis="y", visible=False)
     save(fig, "lr_schedule.png")
     with open(os.path.join(FIG_DIR, "lr_schedule.json"), "w") as f:

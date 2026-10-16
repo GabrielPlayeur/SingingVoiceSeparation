@@ -1,6 +1,6 @@
 # @package _global_
-# Optimisation de la baseline : stéréo, loss L1 d'amplitude, seul le learning rate / scheduler change (lr 3e-4 + cosinus).
-# Early stopping désactivé : il couperait le cosinus avant la fin de la décroissance (tous les runs de cette étude : 150 époques).
+# Baseline optimisation: stereo, amplitude L1 loss, only the learning rate / scheduler changes (lr 3e-4 + cosine).
+# Early stopping disabled: it would cut the cosine before the end of the decay (all the runs of this study: 150 epochs).
 data:
   channels: 2
 model:

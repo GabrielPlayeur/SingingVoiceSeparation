@@ -1,6 +1,6 @@
 # @package _global_
-# Courbe taille/qualité : baseline stéréo (lr 1e-3 constant, loss L1 d'amplitude), seule la LARGEUR du U-Net change :
-# base_channels = 8 au lieu de 16 (profondeur 6 inchangée, donc même crop et mêmes données). Voir README, section 5.
+# Size/quality curve: stereo baseline (constant lr 1e-3, amplitude L1 loss), only the U-Net WIDTH changes:
+# base_channels = 8 instead of 16 (depth 6 unchanged, hence the same crop and the same data). See README, section 5.
 data:
   channels: 2
 model:

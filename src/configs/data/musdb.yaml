@@ -11,3 +11,9 @@ max_retries: 50
 num_workers: 4
 random_seed: 42
 split_path: musdb18/split.json
+# Training augmentations (MUSDBTrainDataset), all off by default; validation is never augmented.
+remix: false          # accompaniment from another track, independent offset
+gain: false           # per-source gain, uniform in [gain_low, gain_high]
+gain_low: 0.25        # Open-Unmix _augment_gain defaults
+gain_high: 1.25
+channel_swap: false   # per-source L/R swap with p = 0.5 (needs channels: 2)

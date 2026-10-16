@@ -1,16 +1,17 @@
-"""Quantification int8 d'un checkpoint : PTQ, ablations, sensibilité par couche, QAT, export réel, évaluation (experiments/08).
+"""int8 quantization of a checkpoint: PTQ, ablations, per-layer sensitivity, QAT, real export, evaluation (experiments/08).
 
-Tout tourne en local (GPU 4 Go pour la simulation et le QAT, CPU pour l'int8 réel). Sous-commandes :
+Everything runs locally (4 GB GPU for the simulation and QAT, CPU for the real int8). Subcommands:
 
-    python -m src.quantize ptq CKPT            # un réglage PTQ simulé : SI-SDR de validation fp32 vs quantifié
-    python -m src.quantize sweep CKPT          # grille d'ablations PTQ (largeur de bits, plage, granularité...) -> JSON
-    python -m src.quantize sensitivity CKPT    # un quantificateur à la fois (Nagel § 3.7) -> JSON
-    python -m src.quantize ranges CKPT         # plage observée vs quantiles de chaque activation -> JSON
-    python -m src.quantize qat CKPT            # fine-tuning avec quantification fictive -> checkpoint .qat.pt
-    python -m src.quantize export CKPT         # vrai int8 (CPU) : taille, latence, accord avec la simulation
-    python -m src.quantize evaluate CKPT       # SDR museval sur les morceaux de test avec le modèle simulé ou réel
+    python -m src.quantize ptq CKPT            # one simulated PTQ setting: validation SI-SDR fp32 vs quantized
+    python -m src.quantize sweep CKPT          # grid of PTQ ablations (bit width, range, granularity...) -> JSON
+    python -m src.quantize sensitivity CKPT    # one quantizer at a time (Nagel § 3.7) -> JSON
+    python -m src.quantize ranges CKPT         # observed range vs quantiles of each activation -> JSON
+    python -m src.quantize qat CKPT            # fine-tuning with fake quantization -> .qat.pt checkpoint
+    python -m src.quantize export CKPT         # real int8 (CPU): size, latency, agreement with the simulation
+    python -m src.quantize evaluate CKPT       # museval SDR on the test tracks with the simulated or real model
+    python -m src.quantize profile CKPT        # time of each (de)convolution, fp32 vs real int8 (CPU) -> JSON
 
-Les métriques rapides (SI-SDR médian de validation) servent aux ablations ; la décision finale se lit sur le SDR de test.
+The fast metrics (median validation SI-SDR) are used for the ablations; the final decision is read on the test SDR.
 """
 import argparse
 import copy
@@ -32,7 +33,7 @@ CONFIG_DATA = os.path.join(os.path.dirname(__file__), "configs", "data", "musdb.
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Modèle et données
+# Model and data
 # ----------------------------------------------------------------------------------------------------------------------
 
 def load_module(ckpt, device):
@@ -41,8 +42,8 @@ def load_module(ckpt, device):
 
 
 def make_datamodule(args, stage="fit", val_crops=None):
-    """`val_crops` : extraits de validation par morceau (15 par défaut = ceux de l'entraînement, ~1 Go en mémoire ; 1 quand on n'en a pas
-    besoin, par exemple pour l'évaluation sur le jeu de test)."""
+    """`val_crops`: validation crops per track (15 by default = those of training, ~1 GB in memory; 1 when they are not
+    needed, e.g. for the evaluation on the test set)."""
     cfg = OmegaConf.load(CONFIG_DATA)
     cfg.dataset_path, cfg.split_path = args.dataset_path, args.split_path
     if val_crops is not None:
@@ -54,21 +55,21 @@ def make_datamodule(args, stage="fit", val_crops=None):
 
 
 def val_loader(dm):
-    """Extraits de validation déjà en mémoire : pas de processus de lecture (un par worker copierait ~0,5 Go chacun, la RAM de ce PC est de 8 Go)."""
+    """Validation crops already in memory: no reader processes (one per worker would copy ~0.5 GB each, this PC has 8 GB of RAM)."""
     from torch.utils.data import DataLoader
     return DataLoader(dm.val_dataset, batch_size=dm.hparams.batch_size, shuffle=False, num_workers=0)
 
 
 def train_loader(dm, num_workers):
-    """Extraits d'entraînement. Processus « spawn » (pas « fork ») : un worker forké hérite des ~0,5 Go d'extraits de validation en mémoire
-    et les recopie (compteurs de références), ce qui fait déborder la RAM de 8 Go de ce PC dès qu'un autre calcul tourne."""
+    """Training crops. "spawn" process (not "fork"): a forked worker inherits the ~0.5 GB of validation crops in memory
+    and copies them (reference counts), which overflows this PC's 8 GB of RAM as soon as another computation is running."""
     from torch.utils.data import DataLoader
     return DataLoader(dm.train_dataset, batch_size=dm.hparams.batch_size, shuffle=True, num_workers=num_workers,
                       persistent_workers=num_workers > 0, multiprocessing_context="spawn" if num_workers > 0 else None)
 
 
 def network_inputs(module, batch, device):
-    """Entrée du U-Net (amplitude transformée) + ce qu'il faut pour reconstruire la forme d'onde, comme `validation_step`."""
+    """U-Net input (transformed amplitude) + what is needed to rebuild the waveform, like `validation_step`."""
     batch = {k: v.to(device) for k, v in batch.items()}
     batch = module.on_after_batch_transfer(batch, 0)
     return batch
@@ -76,7 +77,7 @@ def network_inputs(module, batch, device):
 
 @torch.no_grad()
 def val_sisdr(module, loader, device, max_batches=None):
-    """SI-SDR de validation (médiane, moyenne) sur des extraits fixes : la même quantité que `val/si_sdr_median` de l'entraînement."""
+    """Validation SI-SDR (median, mean) on fixed crops: the same quantity as the training `val/si_sdr_median`."""
     module.eval()
     out = []
     for i, batch in enumerate(loader):
@@ -91,8 +92,8 @@ def val_sisdr(module, loader, device, max_batches=None):
 
 
 def calibration_batches(module, dm, device, n_crops=64, batch_size=8, seed=0):
-    """`n_crops` extraits d'ENTRAÎNEMENT tirés au hasard (graine fixe) -> entrées du réseau. Pas de morceau de validation ni de test
-    (Nagel § 3.5 : un petit jeu de calibration non étiqueté suffit ; ~100 lots chez Krishnamoorthi § 3.1.2)."""
+    """`n_crops` random TRAINING crops (fixed seed) -> network inputs. No validation or test track
+    (Nagel § 3.5: a small unlabelled calibration set is enough; ~100 batches in Krishnamoorthi § 3.1.2)."""
     np.random.seed(seed)
     ds = dm.train_dataset
     crops = [ds[i] for i in range(n_crops)]
@@ -110,12 +111,12 @@ def module_input(module, mix_amp):
 
 
 def attach(module, sim):
-    """Remplace le U-Net du module par la version simulée : `module(...)`, `_to_wave`, `evaluate` s'utilisent ensuite tels quels."""
-    q = VoiceSeparationModule(**module.hparams)  # même hyper-paramètres, même fenêtre STFT ; le module d'origine reste intact
+    """Replaces the module's U-Net with the simulated version: `module(...)`, `_to_wave`, `evaluate` can then be used as is."""
+    q = VoiceSeparationModule(**module.hparams)  # same hyper-parameters, same STFT window; the original module stays intact
     q.model = sim
     try:
         device = next(sim.parameters()).device
-    except StopIteration:   # modèle int8 réel : poids empaquetés, pas de paramètres ; il ne tourne que sur CPU
+    except StopIteration:   # real int8 model: packed weights, no parameters; it only runs on CPU
         device = torch.device("cpu")
     return q.to(device).eval()
 
@@ -144,32 +145,32 @@ def cmd_ptq(args, device):
     cfg = cfg_from_args(args)
     sim = build_sim(module, cfg, dm, device, args.calib_crops)
     q = val_sisdr(attach(module, sim), loader, device)
-    print(f"{cfg}\nfp32  val SI-SDR médian {ref['median']:.3f} dB (n={ref['n']})\nquant val SI-SDR médian {q['median']:.3f} dB  "
-          f"(écart {q['median'] - ref['median']:+.3f} dB)")
+    print(f"{cfg}\nfp32  val SI-SDR median {ref['median']:.3f} dB (n={ref['n']})\nquant val SI-SDR median {q['median']:.3f} dB  "
+          f"(difference {q['median'] - ref['median']:+.3f} dB)")
 
 
-SWEEP = [  # (nom, surcharges de QuantConfig) : une variable à la fois autour du réglage de base W8A8 minmax
-    ("fp32 (contrôle : quantificateurs coupés)", dict(quantize_weights=False, quantize_acts=False)),
-    ("poids seuls W8 (par canal)", dict(quantize_acts=False)),
-    ("poids seuls W8 (par tenseur partout)", dict(quantize_acts=False, w_per_channel=False, convt_per_channel=False)),
-    ("poids seuls W8 (ConvT par canal)", dict(quantize_acts=False, convt_per_channel=True)),
-    ("poids seuls W8 (plage MSE)", dict(quantize_acts=False, w_range="mse")),
-    ("poids seuls W6", dict(quantize_acts=False, w_bits=6)),
-    ("poids seuls W4", dict(quantize_acts=False, w_bits=4)),
-    ("activations seules A8 (minmax)", dict(quantize_weights=False)),
-    ("activations seules A8 (percentile 99.99)", dict(quantize_weights=False, act_range="percentile")),
-    ("activations seules A8 (percentile 99.9)", dict(quantize_weights=False, act_range="percentile", percentile=99.9)),
-    ("activations seules A8 (mse)", dict(quantize_weights=False, act_range="mse")),
-    ("activations seules A8, 8 bits pleins (sans reduce_range)", dict(quantize_weights=False, reduce_range=False)),
-    ("activations seules A8, entrée en flottant", dict(quantize_weights=False, quantize_input=False)),
-    ("activations seules A8 (percentile 99.99), 8 bits pleins", dict(quantize_weights=False, act_range="percentile", reduce_range=False)),
-    ("W8A8 minmax (réglage par défaut)", dict()),
-    ("W8A8 minmax, 8 bits pleins", dict(reduce_range=False)),
-    ("W8A8 percentile 99.99, 8 bits pleins", dict(act_range="percentile", reduce_range=False)),
+SWEEP = [  # (name, QuantConfig overrides): one variable at a time around the base W8A8 minmax setting
+    ("fp32 (control: quantizers off)", dict(quantize_weights=False, quantize_acts=False)),
+    ("weights only W8 (per channel)", dict(quantize_acts=False)),
+    ("weights only W8 (per tensor everywhere)", dict(quantize_acts=False, w_per_channel=False, convt_per_channel=False)),
+    ("weights only W8 (ConvT per channel)", dict(quantize_acts=False, convt_per_channel=True)),
+    ("weights only W8 (MSE range)", dict(quantize_acts=False, w_range="mse")),
+    ("weights only W6", dict(quantize_acts=False, w_bits=6)),
+    ("weights only W4", dict(quantize_acts=False, w_bits=4)),
+    ("activations only A8 (minmax)", dict(quantize_weights=False)),
+    ("activations only A8 (percentile 99.99)", dict(quantize_weights=False, act_range="percentile")),
+    ("activations only A8 (percentile 99.9)", dict(quantize_weights=False, act_range="percentile", percentile=99.9)),
+    ("activations only A8 (mse)", dict(quantize_weights=False, act_range="mse")),
+    ("activations only A8, full 8 bits (no reduce_range)", dict(quantize_weights=False, reduce_range=False)),
+    ("activations only A8, input in float", dict(quantize_weights=False, quantize_input=False)),
+    ("activations only A8 (percentile 99.99), full 8 bits", dict(quantize_weights=False, act_range="percentile", reduce_range=False)),
+    ("W8A8 minmax (default setting)", dict()),
+    ("W8A8 minmax, full 8 bits", dict(reduce_range=False)),
+    ("W8A8 percentile 99.99, full 8 bits", dict(act_range="percentile", reduce_range=False)),
     ("W8A8 percentile 99.99", dict(act_range="percentile")),
-    ("W8A8 mse (poids et activations)", dict(act_range="mse", w_range="mse")),
-    ("W8A8 mse, entrée en flottant", dict(act_range="mse", w_range="mse", quantize_input=False)),
-    ("W8A8 percentile 99.99, entrée en flottant", dict(act_range="percentile", quantize_input=False)),
+    ("W8A8 mse (weights and activations)", dict(act_range="mse", w_range="mse")),
+    ("W8A8 mse, input in float", dict(act_range="mse", w_range="mse", quantize_input=False)),
+    ("W8A8 percentile 99.99, input in float", dict(act_range="percentile", quantize_input=False)),
 ]
 
 
@@ -179,7 +180,7 @@ def cmd_sweep(args, device):
     loader = val_loader(dm)
     batches = calibration_batches(module, dm, device, args.calib_crops)
     ref = val_sisdr(module, loader, device)
-    print(f"fp32 : val SI-SDR médian {ref['median']:.3f} dB (n={ref['n']})")
+    print(f"fp32: val SI-SDR median {ref['median']:.3f} dB (n={ref['n']})")
     rows = []
     for name, over in SWEEP:
         cfg = QuantConfig(**over)
@@ -192,7 +193,7 @@ def cmd_sweep(args, device):
 
 
 def cmd_sensitivity(args, device):
-    """Nagel § 3.7 « per-layer analysis » : on quantifie UN seul quantificateur (les autres restent en flottant) et on mesure la chute."""
+    """Nagel § 3.7 "per-layer analysis": ONE single quantizer is quantized (the others stay in float) and the drop is measured."""
     module = load_module(args.ckpt, device)
     dm = make_datamodule(args)
     loader = val_loader(dm)
@@ -217,8 +218,8 @@ def cmd_sensitivity(args, device):
 
 @torch.no_grad()
 def cmd_ranges(args, device):
-    """Plage observée de chaque activation (min, max) contre ses quantiles 0,01 % et 99,99 % : explique pourquoi la plage min-max est
-    mauvaise (un pas de quantification fixé par quelques valeurs extrêmes)."""
+    """Observed range of each activation (min, max) against its 0.01 % and 99.99 % quantiles: explains why the min-max range is
+    bad (a quantization step set by a few extreme values)."""
     module = load_module(args.ckpt, device)
     dm = make_datamodule(args)
     sim = SimUNet(module.model, cfg_from_args(args)).to(device).eval()
@@ -230,7 +231,7 @@ def cmd_ranges(args, device):
         for x in calibration_batches(module, dm, device, args.calib_crops):
             sim(x)
     rows = []
-    print(f"{'quantificateur':14s} {'min':>9s} {'p0.01':>9s} {'p99.99':>9s} {'max':>9s} {'max/p99.99':>11s} {'pas 8 bits (minmax)':>20s} {'pas (p99.99)':>13s}")
+    print(f"{'quantizer':14s} {'min':>9s} {'p0.01':>9s} {'p99.99':>9s} {'max':>9s} {'max/p99.99':>11s} {'8-bit step (minmax)':>20s} {'step (p99.99)':>13s}")
     for n in sim.act_names:
         qz = sim.Q(n)
         smp = torch.cat(qz._samples)
@@ -252,12 +253,12 @@ def cmd_qat(args, device):
     sim = build_sim(module, cfg, dm, device, args.calib_crops)
     q = attach(module, sim)
     ptq = val_sisdr(q, loader_val, device)
-    print(f"fp32 {ref['median']:.3f} dB | PTQ {ptq['median']:.3f} dB ({ptq['median'] - ref['median']:+.3f}) | QAT : {args.epochs} époques, lr {args.lr}{' cosinus' if args.cosine else ''}", flush=True)
+    print(f"fp32 {ref['median']:.3f} dB | PTQ {ptq['median']:.3f} dB ({ptq['median'] - ref['median']:+.3f}) | QAT: {args.epochs} epochs, lr {args.lr}{' cosine' if args.cosine else ''}", flush=True)
     params = [p for p in sim.parameters() if p.requires_grad]
     opt = torch.optim.Adam(params, lr=args.lr)
     steps_per_epoch = len(range(0, dm.hparams.epoch_size, dm.hparams.batch_size))
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs * steps_per_epoch, eta_min=0.0) if args.cosine else None
-    # quant : plages d'activation figées à la calibration (percentile...) ; qat : moyenne mobile min/max ; off : témoin sans quantification
+    # quant: activation ranges frozen at calibration (percentile...); qat: min/max moving average; off: control without quantization
     act_mode = ("qat" if args.update_ranges else "quant") if cfg.quantize_acts else "off"
     w_mode = "qat" if cfg.quantize_weights else "off"
     sim.set_mode(act=act_mode, weights=w_mode)
@@ -282,18 +283,18 @@ def cmd_qat(args, device):
         v = val_sisdr(q, loader_val, device)
         sim.set_mode(act=act_mode, weights=w_mode)
         history.append({"epoch": epoch, "train_loss": tot / n, "val_median": v["median"]})
-        print(f"époque {epoch:2d}  loss {tot / n:.4f}  val SI-SDR {v['median']:.3f} dB ({v['median'] - ref['median']:+.3f} vs fp32)  {time.time() - t0:.0f} s", flush=True)
+        print(f"epoch {epoch:2d}  loss {tot / n:.4f}  val SI-SDR {v['median']:.3f} dB ({v['median'] - ref['median']:+.3f} vs fp32)  {time.time() - t0:.0f} s", flush=True)
         if args.select == "best" and v["median"] > best or args.select == "last" and epoch == args.epochs:
             best, best_state = v["median"], {k: x.detach().cpu().clone() for k, x in sim.state_dict().items()}
     if best_state is None:
-        print("QAT n'a pas dépassé le PTQ de départ : on garde l'état PTQ (aucun checkpoint écrit).")
+        print("QAT did not beat the starting PTQ: keeping the PTQ state (no checkpoint written).")
         return
     sim.load_state_dict(best_state)
     sim.eval(); sim.set_mode(act="quant" if cfg.quantize_acts else "off", weights="quant" if cfg.quantize_weights else "off"); sim.finalize_weights()
     out = args.out or args.ckpt.replace(".ckpt", "") + f".qat_{args.tag}.pt"
     torch.save({"state_dict": sim.state_dict(), "config": vars(cfg), "ckpt": args.ckpt, "history": history, "fp32_val": ref, "ptq_val": ptq,
                 "epochs": args.epochs, "lr": args.lr, "cosine": args.cosine}, out)
-    print(f"état retenu ({args.select}) : {best:.3f} dB -> {out}")
+    print(f"state kept ({args.select}): {best:.3f} dB -> {out}")
 
 
 def load_sim(module, path, device):
@@ -320,26 +321,71 @@ def cmd_export(args, device):
     n = args.max_batches
     r_fp, r_sim = val_sisdr(module, loader, cpu, n), val_sisdr(attach(module, sim), loader, cpu, n)
     r_real = val_sisdr(attach(module, real), loader, cpu, n)
-    print(f"val SI-SDR médian : fp32 {r_fp['median']:.3f} | simulation {r_sim['median']:.3f} | int8 réel {r_real['median']:.3f} dB (n={r_fp['n']})")
+    print(f"val SI-SDR median: fp32 {r_fp['median']:.3f} | simulation {r_sim['median']:.3f} | real int8 {r_real['median']:.3f} dB (n={r_fp['n']})")
     x = next(iter(val_loader(dm)))
     b = network_inputs(module, {k: v[:1] for k, v in x.items()}, cpu)
     inp = module_input(module, b["mix_amp"])
     with torch.no_grad():
         m_fp, m_sim, m_real = module.model(inp), sim(inp), real(inp)
-    print(f"masque : |sim - réel| moyen {float((m_sim - m_real).abs().mean()):.5f} (max {float((m_sim - m_real).abs().max()):.3f}) ; "
-          f"|fp32 - réel| moyen {float((m_fp - m_real).abs().mean()):.5f}")
+    print(f"mask: mean |sim - real| {float((m_sim - m_real).abs().mean()):.5f} (max {float((m_sim - m_real).abs().max()):.3f}) ; "
+          f"mean |fp32 - real| {float((m_fp - m_real).abs().mean()):.5f}")
     fp_bytes, int8_bytes = state_dict_bytes(module.model), state_dict_bytes(real)
-    print(f"taille : fp32 {fp_bytes / 1e6:.2f} Mo (BatchNorm comprise) | int8 {int8_bytes / 1e6:.2f} Mo ({fp_bytes / int8_bytes:.2f}x)")
+    print(f"size: fp32 {fp_bytes / 1e6:.2f} MB (BatchNorm included) | int8 {int8_bytes / 1e6:.2f} MB ({fp_bytes / int8_bytes:.2f}x)")
     lat = {}
     for threads in args.threads:
         lat[threads] = {"fp32": latency_ms(module.model, inp, threads), "int8": latency_ms(real, inp, threads)}
         f, i = lat[threads]["fp32"][0], lat[threads]["int8"][0]
-        print(f"latence 1 extrait 5,93 s, {threads} thread(s) : fp32 {f:.0f} ms | int8 {i:.0f} ms ({f / i:.2f}x)")
+        print(f"latency 1 crop 5.93 s, {threads} thread(s): fp32 {f:.0f} ms | int8 {i:.0f} ms ({f / i:.2f}x)")
     save_json(args.out or "figures/quant_export.json", {"ckpt": args.ckpt, "qat": args.qat, "val": {"fp32": r_fp, "sim": r_sim, "real": r_real},
                                                        "bytes": {"fp32": fp_bytes, "int8": int8_bytes}, "latency_ms": {str(k): v for k, v in lat.items()},
                                                        "mask_diff_sim_real": float((m_sim - m_real).abs().mean())})
     if args.save:
         torch.save(real.state_dict(), args.save)
+
+
+def cmd_profile(args, device):
+    """CPU time of each Conv2d / ConvTranspose2d, fp32 against real int8, measured layer by layer on their real input
+    (captured by hooks during a forward pass). The input values do not affect the time: random crop
+    of the shape of a training crop (1, channels, n_fft/2 + 1, frames)."""
+    cpu = torch.device("cpu")
+    module = load_module(args.ckpt, cpu)
+    if args.qat:
+        sim, _ = load_sim(module, args.qat, cpu)
+    else:
+        sim = build_sim(module, cfg_from_args(args), make_datamodule(args), cpu, args.calib_crops)
+    hp = module.hparams
+    x = torch.rand(1, hp.in_channels, hp.n_fft // 2 + 1, args.crop_length // hp.hop_length + 1)
+    models = {"fp32": module.model.eval(), "int8": export_int8(sim).eval()}
+
+    def layer_times(model, threads):
+        caught = []
+        hooks = [m.register_forward_hook(lambda m, i, o: caught.append((m, i[0]))) for m in model.modules()
+                 if "Conv" in type(m).__name__ and not list(m.children())]
+        with torch.no_grad():
+            model(x)
+        for h in hooks:
+            h.remove()
+        rows = []
+        with torch.no_grad():
+            for m, inp in caught:
+                rows.append({"layer": type(m).__name__, "ms": latency_ms(m, inp, threads, repeats=5)[0]})
+        return rows
+
+    out = {"ckpt": args.ckpt, "qat": args.qat, "input_shape": list(x.shape), "threads": {}}
+    for threads in args.threads:
+        res = {name: layer_times(m, threads) for name, m in models.items()}
+        summary = {}
+        for name, rows in res.items():
+            tr = [r["ms"] for r in rows if "Transpose" in r["layer"]]
+            cv = [r["ms"] for r in rows if "Transpose" not in r["layer"]]
+            summary[name] = {"conv_transpose_ms": tr, "conv_ms": cv}
+            print(f"{threads} thread(s), {name} : {len(tr)} ConvTranspose2d {sum(tr):.0f} ms {[round(t) for t in tr]} | "
+                  f"{len(cv)} Conv2d {sum(cv):.0f} ms")
+        a, b = summary["fp32"]["conv_transpose_ms"], summary["int8"]["conv_transpose_ms"]
+        print(f"  int8 / fp32 per deconvolution: {[round(j / i, 1) for i, j in zip(a, b)]} (total {sum(b) / sum(a):.1f}x); "
+              f"convolutions: {sum(summary['int8']['conv_ms']) / sum(summary['fp32']['conv_ms']):.2f}x")
+        out["threads"][str(threads)] = summary
+    save_json(args.out or "figures/quant_profile.json", out)
 
 
 def cmd_evaluate(args, device):
@@ -369,18 +415,18 @@ def save_json(path, obj):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0], formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["ptq", "sweep", "sensitivity", "ranges", "qat", "export", "evaluate"])
+    ap.add_argument("command", choices=["ptq", "sweep", "sensitivity", "ranges", "qat", "export", "evaluate", "profile"])
     ap.add_argument("ckpt")
     ap.add_argument("--dataset-path", default="musdb18/processed")
     ap.add_argument("--split-path", default="musdb18/split.json")
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--num-workers", type=int, default=2)
-    ap.add_argument("--calib-crops", type=int, default=64, help="extraits d'entraînement utilisés pour calibrer les plages")
-    ap.add_argument("--val-crops", type=int, default=3, help="export : extraits de validation par morceau (3 x 16 = 48)")
-    ap.add_argument("--max-batches", type=int, default=None, help="limite le nombre de lots de validation (sensibilité, export)")
+    ap.add_argument("--calib-crops", type=int, default=64, help="training crops used to calibrate the ranges")
+    ap.add_argument("--val-crops", type=int, default=3, help="export: validation crops per track (3 x 16 = 48)")
+    ap.add_argument("--max-batches", type=int, default=None, help="limits the number of validation batches (sensitivity, export)")
     ap.add_argument("-o", "--out", default=None)
-    ap.add_argument("--cpu", action="store_true", help="force le CPU (la simulation tourne sur GPU par défaut)")
-    # réglage de quantification
+    ap.add_argument("--cpu", action="store_true", help="forces the CPU (the simulation runs on GPU by default)")
+    # quantization setting
     ap.add_argument("--w-bits", type=int, default=8)
     ap.add_argument("--a-bits", type=int, default=8)
     ap.add_argument("--w-per-tensor", action="store_true")
@@ -389,20 +435,20 @@ def main():
     ap.add_argument("--act-range", default="minmax", choices=["minmax", "percentile", "mse"])
     ap.add_argument("--percentile", type=float, default=99.99)
     ap.add_argument("--no-reduce-range", action="store_true")
-    ap.add_argument("--fp-input", action="store_true", help="entrée du réseau non quantifiée")
+    ap.add_argument("--fp-input", action="store_true", help="network input not quantized")
     ap.add_argument("--no-weights", action="store_true")
     ap.add_argument("--no-acts", action="store_true")
     # QAT
     ap.add_argument("--epochs", type=int, default=10)
     ap.add_argument("--lr", type=float, default=1e-4)
-    ap.add_argument("--tag", default="a", help="suffixe du fichier .qat_<tag>.pt")
-    ap.add_argument("--select", default="last", choices=["last", "best"], help="QAT : garder la dernière époque (défaut) ou la meilleure sur la validation (biaisé vers le haut : choisi sur du bruit)")
-    ap.add_argument("--cosine", action="store_true", help="QAT : lr décroissant en cosinus jusqu'à 0 (le lr constant de la baseline oscille de ~0,3 dB d'une époque à l'autre)")
-    ap.add_argument("--update-ranges", action="store_true", help="QAT : les plages d'activation suivent une moyenne mobile min/max (Krishnamoorthi) au lieu de rester figées")
-    # export / évaluation
-    ap.add_argument("--qat", default=None, help="fichier .qat.pt : modèle simulé issu du QAT (sinon PTQ avec le réglage ci-dessus)")
-    ap.add_argument("--real", action="store_true", help="evaluate : vrai modèle int8 (CPU) au lieu de la simulation")
-    ap.add_argument("--save", default=None, help="export : écrit le state_dict int8")
+    ap.add_argument("--tag", default="a", help="suffix of the .qat_<tag>.pt file")
+    ap.add_argument("--select", default="last", choices=["last", "best"], help="QAT: keep the last epoch (default) or the best on validation (biased upwards: chosen on noise)")
+    ap.add_argument("--cosine", action="store_true", help="QAT: lr decaying as a cosine to 0 (the baseline's constant lr oscillates by ~0.3 dB from one epoch to the next)")
+    ap.add_argument("--update-ranges", action="store_true", help="QAT: the activation ranges follow a min/max moving average (Krishnamoorthi) instead of staying frozen")
+    # export / evaluation
+    ap.add_argument("--qat", default=None, help=".qat.pt file: simulated model from QAT (otherwise PTQ with the setting above)")
+    ap.add_argument("--real", action="store_true", help="evaluate: real int8 model (CPU) instead of the simulation")
+    ap.add_argument("--save", default=None, help="export: writes the int8 state_dict")
     ap.add_argument("--threads", type=int, nargs="+", default=[1, 4])
     ap.add_argument("--crop-length", type=int, default=261632)
     ap.add_argument("--max-tracks", type=int, default=None)

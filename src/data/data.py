@@ -35,6 +35,11 @@ class MUSDB18DataModule(L.LightningDataModule):
         num_workers: int,
         random_seed: int,
         split_path: str,
+        remix: bool = False,
+        gain: bool = False,
+        gain_low: float = 0.25,
+        gain_high: float = 1.25,
+        channel_swap: bool = False,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
@@ -44,7 +49,7 @@ class MUSDB18DataModule(L.LightningDataModule):
         return list_track_dirs(self.hparams.dataset_path, split)
 
     def _load_split(self, train_dirs):
-        # split par artiste, sauvegardé pour être reproductible
+        # split by artist, saved to be reproducible
         if os.path.exists(self.hparams.split_path):
             with open(self.hparams.split_path) as f:
                 saved = json.load(f)
@@ -58,7 +63,7 @@ class MUSDB18DataModule(L.LightningDataModule):
         return self._build_split(train_dirs)
 
     def _build_split(self, train_dirs):
-        # le nom d'artiste = tout avant " - " dans le nom du dossier
+        # the artist name = everything before " - " in the folder name
         names = [os.path.basename(d) for d in train_dirs]
         groups = [n.split(" - ")[0] for n in names]
 
@@ -107,6 +112,11 @@ class MUSDB18DataModule(L.LightningDataModule):
                 silence_threshold=self.hparams.silence_threshold,
                 max_retries=self.hparams.max_retries,
                 channels=self.hparams.channels,
+                remix=self.hparams.remix,
+                gain=self.hparams.gain,
+                gain_low=self.hparams.gain_low,
+                gain_high=self.hparams.gain_high,
+                channel_swap=self.hparams.channel_swap,
             )
             val_crops = self._build_val_crops(val_dirs)
             self.val_dataset = MUSDBFixedDataset(val_crops)

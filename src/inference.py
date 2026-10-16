@@ -32,9 +32,9 @@ def separate_full_track(
         )
 
     T = mixture.shape[-1]
-    hop = crop_length // 2  # 50% recouvrement
+    hop = crop_length // 2  # 50% overlap
 
-    # on pad la fin pour que les chunks couvrent toute la piste
+    # pad the end so that the chunks cover the whole track
     n_chunks = max(math.ceil((T - crop_length) / hop), 0) + 1
     padded_len = (n_chunks - 1) * hop + crop_length
     padded = F.pad(mixture, (0, padded_len - T))

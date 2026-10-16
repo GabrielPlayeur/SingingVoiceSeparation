@@ -1,5 +1,5 @@
 # @package _global_
-# Baseline stéréo + weighted-SDR de Choi et al. 2019 (ICLR) sur la forme d'onde reconstruite (terme voix + terme accompagnement).
+# Stereo baseline + weighted-SDR of Choi et al. 2019 (ICLR) on the reconstructed waveform (vocals term + accompaniment term).
 data:
   channels: 2
 model:

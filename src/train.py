@@ -36,12 +36,17 @@ def main(cfg: DictConfig):
     logger.experiment.define_metric("val/si_sdr_median", summary="max")
     logger.experiment.define_metric("val/si_sdri_median", summary="max")
 
+    # The best-on-validation checkpoint stays the first ModelCheckpoint: `trainer.checkpoint_callback` (used below) is the first one.
+    # save_last also writes last.ckpt (final weights, unaffected by the selection bias of "best of N noisy epochs").
     callbacks = [
-        ModelCheckpoint(monitor="val/si_sdr_median", save_top_k=1, mode="max"),
+        ModelCheckpoint(monitor="val/si_sdr_median", save_top_k=1, mode="max", save_last=True),
         OracleValReference(n_fft=cfg.model.n_fft, hop_length=cfg.model.hop_length),
-        LearningRateMonitor(logging_interval="epoch"),  # courbe du lr dans W&B (constante, ou cosinus)
+        LearningRateMonitor(logging_interval="epoch"),  # lr curve in W&B (constant, cosine or wsd)
     ]
-    if cfg.training.early_stopping_patience is not None:  # null : désactivé (il couperait la décroissance du scheduler)
+    if cfg.training.checkpoint_every_n_epochs is not None:  # periodic checkpoints (all kept) to evaluate several budgets from one run
+        callbacks.append(ModelCheckpoint(every_n_epochs=cfg.training.checkpoint_every_n_epochs, save_top_k=-1,
+                                         filename="periodic-epoch{epoch}-step{step}", auto_insert_metric_name=False))
+    if cfg.training.early_stopping_patience is not None:  # null: disabled (it would cut the scheduler's decay short)
         callbacks.insert(0, EarlyStopping(
             monitor="val/si_sdr_median",
             mode="max",

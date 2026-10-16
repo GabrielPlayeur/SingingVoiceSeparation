@@ -1,47 +1,47 @@
-"""Losses calculées sur la FORME D'ONDE estimée (ROADMAP, étape 2b, limite e du walkthrough).
+"""Losses computed on the estimated WAVEFORM (ROADMAP, step 2b, walkthrough limit e).
 
-La forme d'onde est `istft(masque * |X|, phase du mélange)` (`VoiceSeparationModule._to_wave`, différentiable) : la loss voit donc
-la reconstruction réelle, phase du mélange comprise, c'est-à-dire ce que l'évaluation mesure. Toutes prennent des tenseurs
-(B, C, T) et renvoient un scalaire à MINIMISER.
+The waveform is `istft(mask * |X|, mixture phase)` (`VoiceSeparationModule._to_wave`, differentiable): the loss therefore sees
+the actual reconstruction, mixture phase included, i.e. what the evaluation measures. All of them take (B, C, T) tensors and
+return a scalar to MINIMISE.
 
     sisdr   : -SI-SDR (dB)                                        Le Roux et al. 2019, eq. 4-5
-    wsdr    : -[α·cos(y, ŷ) + (1-α)·cos(z, ẑ)], z = x - y         Choi et al. 2019 (ICLR), eq. 7 et 9
-    mrstft  : moyenne sur M résolutions de (L_sc + L_mag)         Yamamoto et al. 2020, eq. 3-6 et table 1
+    wsdr    : -[α·cos(y, ŷ) + (1-α)·cos(z, ẑ)], z = x - y         Choi et al. 2019 (ICLR), eq. 7 and 9
+    mrstft  : mean over M resolutions of (L_sc + L_mag)         Yamamoto et al. 2020, eq. 3-6 and table 1
 
-Rien ici n'est tiré d'une bibliothèque : les formules sont celles des papiers, relues en entier (voir README).
+Nothing here comes from a library: the formulas are those of the papers, read in full (see README).
 """
 import torch
 from torch.utils.checkpoint import checkpoint
 
 from .utils import si_sdr
 
-EPS = 1e-8  # dénominateurs de wsdr : « we add small number ε to denominators » (Choi et al., annexe C) ; valeur choisie ici
+EPS = 1e-8  # denominators of wsdr: "we add small number ε to denominators" (Choi et al., appendix C); the value is chosen here
 
-# Table 1 de Yamamoto et al. (24 kHz) : (FFT, fenêtre, pas) = (1024, 600, 120), (2048, 1200, 240), (512, 240, 50), soit des
-# fenêtres de 25 / 50 / 10 ms et des pas de 5 / 10 / ~2 ms. Ramenées à 44,1 kHz EN CONSERVANT LES DURÉES (⚠ c : adaptation faite
-# ici, le papier ne traite que du 24 kHz), FFT = puissance de 2 qui contient la fenêtre.
+# Table 1 of Yamamoto et al. (24 kHz): (FFT, window, hop) = (1024, 600, 120), (2048, 1200, 240), (512, 240, 50), i.e.
+# windows of 25 / 50 / 10 ms and hops of 5 / 10 / ~2 ms. Converted to 44.1 kHz KEEPING THE DURATIONS (⚠ c: adaptation made
+# here, the paper only covers 24 kHz), FFT = power of 2 that contains the window.
 MRSTFT_RESOLUTIONS = (
-    (2048, 1102, 220),  # fenêtre 25 ms, pas 5 ms
-    (4096, 2205, 441),  # fenêtre 50 ms, pas 10 ms
-    (1024, 441, 92),    # fenêtre 10 ms, pas ~2 ms
+    (2048, 1102, 220),  # window 25 ms, hop 5 ms
+    (4096, 2205, 441),  # window 50 ms, hop 10 ms
+    (1024, 441, 92),    # window 10 ms, hop ~2 ms
 )
-MRSTFT_FLOOR = 1e-7  # plancher de |STFT|² : d|z|/dz n'est pas défini en 0 ; choix d'implémentation, absent du papier
+MRSTFT_FLOOR = 1e-7  # floor of |STFT|²: d|z|/dz is undefined at 0; implementation choice, not in the paper
 
 LOSS_TYPES = ("amp_l1", "sisdr", "wsdr", "mrstft")
 
 
 def sisdr_loss(est: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    """-SI-SDR moyen sur (exemples, canaux). Même fonction que la métrique de validation (`utils.si_sdr`), donc même formule
-    que `val/si_sdr_*` : on optimise exactement ce qui est suivi. Invariante à l'échelle de `est` (Le Roux et al., § 2.3)."""
+    """Mean -SI-SDR over (examples, channels). Same function as the validation metric (`utils.si_sdr`), hence the same formula
+    as `val/si_sdr_*`: exactly what is monitored is optimised. Invariant to the scale of `est` (Le Roux et al., § 2.3)."""
     return -si_sdr(est, target).mean()
 
 
 def wsdr_loss(mixture: torch.Tensor, target: torch.Tensor, est: torch.Tensor) -> torch.Tensor:
-    """Weighted-SDR de Choi et al. : α·loss_SDR(y, ŷ) + (1-α)·loss_SDR(z, ẑ), loss_SDR(a, b) = -<a, b> / (‖a‖‖b‖) (cosinus),
-    z = x - y (bruit, ici l'accompagnement), ẑ = x - ŷ, α = ‖y‖² / (‖y‖² + ‖z‖²). Bornée dans [-1, 1].
+    """Weighted-SDR of Choi et al.: α·loss_SDR(y, ŷ) + (1-α)·loss_SDR(z, ẑ), loss_SDR(a, b) = -<a, b> / (‖a‖‖b‖) (cosine),
+    z = x - y (noise, here the accompaniment), ẑ = x - ŷ, α = ‖y‖² / (‖y‖² + ‖z‖²). Bounded in [-1, 1].
 
-    Calculée par exemple ET par canal (comme le SI-SDR de la validation) puis moyennée. Le terme de bruit ẑ = x - ŷ rend la loss
-    sensible à l'échelle de ŷ, contrairement au SI-SDR (le papier : « solve the scale insensitivity problem »)."""
+    Computed per example AND per channel (like the validation SI-SDR) then averaged. The noise term ẑ = x - ŷ makes the loss
+    sensitive to the scale of ŷ, unlike SI-SDR (the paper: "solve the scale insensitivity problem")."""
     y, y_hat = target.reshape(-1, target.shape[-1]), est.reshape(-1, est.shape[-1])
     z, z_hat = mixture.reshape(-1, mixture.shape[-1]) - y, mixture.reshape(-1, mixture.shape[-1]) - y_hat
 
@@ -60,25 +60,25 @@ def _stft_mag(x: torch.Tensor, n_fft: int, win_length: int, hop: int) -> torch.T
 
 
 def _stft_loss_one(est: torch.Tensor, target: torch.Tensor, n_fft: int, win_length: int, hop: int) -> torch.Tensor:
-    with torch.no_grad():  # la cible n'a pas de gradient : ne pas garder ses intermédiaires
+    with torch.no_grad():  # the target has no gradient: do not keep its intermediates
         mag_tgt = _stft_mag(target, n_fft, win_length, hop)
     mag_est = _stft_mag(est, n_fft, win_length, hop)
-    l_sc = (torch.linalg.norm(mag_tgt - mag_est, dim=(-2, -1)) / torch.linalg.norm(mag_tgt, dim=(-2, -1))).mean()  # par signal
+    l_sc = (torch.linalg.norm(mag_tgt - mag_est, dim=(-2, -1)) / torch.linalg.norm(mag_tgt, dim=(-2, -1))).mean()  # per signal
     l_mag = torch.nn.functional.l1_loss(torch.log(mag_est), torch.log(mag_tgt))
     return l_sc + l_mag
 
 
 def multires_stft_loss(est: torch.Tensor, target: torch.Tensor, resolutions=MRSTFT_RESOLUTIONS) -> torch.Tensor:
-    """Moyenne sur les résolutions de L_sc + L_mag (Yamamoto et al., eq. 3-6), poids 1 : le papier somme les deux termes sans
-    pondération.
+    """Mean over the resolutions of L_sc + L_mag (Yamamoto et al., eq. 3-6), weight 1: the paper sums the two terms without
+    weighting.
 
-        L_sc  = ‖|S(y)| - |S(ŷ)|‖_F / ‖|S(y)|‖_F          (convergence spectrale : relatif, donc insensible au niveau)
-        L_mag = (1/N) ‖log|S(y)| - log|S(ŷ)|‖_1           (magnitude log : égalise les bins forts et faibles)
+        L_sc  = ‖|S(y)| - |S(ŷ)|‖_F / ‖|S(y)|‖_F          (spectral convergence: relative, hence insensitive to the level)
+        L_mag = (1/N) ‖log|S(y)| - log|S(ŷ)|‖_1           (log magnitude: balances strong and weak bins)
 
-    Ne regarde que des magnitudes : la phase n'est contrainte qu'indirectement, via la cohérence de l'iSTFT.
+    Only looks at magnitudes: the phase is constrained only indirectly, through the consistency of the iSTFT.
 
-    Mémoire : la résolution au pas de 92 échantillons produit ~2800 trames ; sans précaution les intermédiaires pèsent ~2 Gio sur
-    les 4 Gio disponibles. Chaque résolution est donc recalculée à la rétropropagation (checkpoint) au lieu d'être stockée."""
+    Memory: the resolution with a hop of 92 samples produces ~2800 frames; without care the intermediates weigh ~2 GiB out of
+    the 4 GiB available. Each resolution is therefore recomputed during backpropagation (checkpoint) instead of being stored."""
     est, target = est.reshape(-1, est.shape[-1]), target.reshape(-1, target.shape[-1])
     total = 0.0
     for n_fft, win_length, hop in resolutions:

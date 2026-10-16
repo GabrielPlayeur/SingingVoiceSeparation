@@ -1,4 +1,4 @@
-"""Lit deploy/env.sh (+ env.local.sh) : une seule source de vérité pour les scripts Python, sans dupliquer les valeurs."""
+"""Reads deploy/env.sh (+ env.local.sh): a single source of truth for the Python scripts, without duplicating the values."""
 import os
 import subprocess
 from pathlib import Path

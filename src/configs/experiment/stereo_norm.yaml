@@ -1,5 +1,5 @@
 # @package _global_
-# Baseline stéréo + |X| normalisé par sa moyenne sur chaque extrait de 6 s : invariance exacte au gain (voir src/utils/input_transform.py)
+# Stereo baseline + |X| normalised by its mean over each 6 s crop: exact invariance to the gain (see src/utils/input_transform.py)
 data:
   channels: 2
 model:

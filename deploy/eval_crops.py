@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Évalue des checkpoints déjà entraînés à d'AUTRES longueurs de fenêtre d'inférence (expérience « longueur de contexte »,
-experiments/07_context_length.md). Rien n'est réentraîné : `src.evaluate --crop-length N` sur le meilleur checkpoint du run.
+"""Evaluates already-trained checkpoints at OTHER inference window lengths ("context length" experiment,
+experiments/07_context_length.md). Nothing is retrained: `src.evaluate --crop-length N` on the best checkpoint of the run.
 
     python deploy/eval_crops.py --tag ctx-v1 --eval ctx3_s42=130560 --eval ctx12_s42=523776 \
         --eval loss-v1/baseline_s42=130560,392704,523776 [--parallel 2] [--dry-run]
 
-- `--eval RUN=N[,N...]` : RUN est un dossier de RUNS_DIR/<tag>/ ; `AUTRE_TAG/RUN` désigne un run d'un autre tag (ex. la baseline de
-  loss-v1) : ses résultats vont dans RUNS_DIR/<tag>/infer_<AUTRE_TAG>_<RUN>/ pour partir avec le rapatriement de <tag>.
-- Sortie : eval_crop<N>.json (+ .log) à côté de eval.json, même format. Déjà présent : saute (--force pour refaire).
-- N est en échantillons et doit donner un nombre de trames STFT multiple de 2**depth : 130560 (2,96 s), 261632 (5,93 s),
-  392704 (8,90 s), 523776 (11,88 s).
-- Le code exécuté est le checkout figé de <tag> (RUNS_DIR/<tag>/_code, créé par run_queue.py) : il doit contenir `--crop-length`.
+- `--eval RUN=N[,N...]`: RUN is a folder of RUNS_DIR/<tag>/; `OTHER_TAG/RUN` designates a run of another tag (e.g. the baseline of
+  loss-v1): its results go to RUNS_DIR/<tag>/infer_<OTHER_TAG>_<RUN>/ so that they leave with the fetch of <tag>.
+- Output: eval_crop<N>.json (+ .log) next to eval.json, same format. Already present: skipped (--force to redo).
+- N is in samples and must give a number of STFT frames that is a multiple of 2**depth: 130560 (2.96 s), 261632 (5.93 s),
+  392704 (8.90 s), 523776 (11.88 s).
+- The code that runs is the frozen checkout of <tag> (RUNS_DIR/<tag>/_code, created by run_queue.py): it must contain `--crop-length`.
 """
 import argparse
 import glob
@@ -26,14 +26,16 @@ from _env import REPO_ROOT, cpu_cores, load_env
 
 
 def find_ckpt(rundir):
-    found = glob.glob(str(rundir / "outputs" / "VoiceSeparation" / "*" / "checkpoints" / "*.ckpt"))
+    """Best-on-validation checkpoint of a run: the most recent .ckpt that is neither last.ckpt nor a periodic-* one."""
+    found = [c for c in glob.glob(str(rundir / "outputs" / "VoiceSeparation" / "*" / "checkpoints" / "*.ckpt"))
+             if not os.path.basename(c).startswith(("last", "periodic"))]
     return max(found, key=os.path.getmtime) if found else None
 
 
 def parse(spec, tag, runs_dir):
     run, _, crops = spec.partition("=")
     if not crops:
-        sys.exit(f"ERREUR: --eval {spec!r} : attendu RUN=N[,N...]")
+        sys.exit(f"ERROR: --eval {spec!r}: expected RUN=N[,N...]")
     if "/" in run:
         other, name = run.split("/", 1)
         src, out = runs_dir / other / name, runs_dir / tag / f"infer_{other}_{name}"
@@ -47,8 +49,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0], formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--tag", required=True)
     ap.add_argument("--eval", action="append", required=True, metavar="RUN=N[,N...]")
-    ap.add_argument("--parallel", type=int, default=1, help="évaluations simultanées (défaut 1)")
-    ap.add_argument("--workers", type=int, default=None, help="processus de métriques par évaluation (défaut : cœurs / (2 x parallel), 6 au plus)")
+    ap.add_argument("--parallel", type=int, default=1, help="simultaneous evaluations (default 1)")
+    ap.add_argument("--workers", type=int, default=None, help="metric processes per evaluation (default: cores / (2 x parallel), at most 6)")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -57,7 +59,7 @@ def main():
     code = runs_dir / args.tag / "_code"
     try:
         cwd = code if code.exists() else REPO_ROOT
-    except OSError:   # dossier inaccessible (ex. --dry-run sur le PC : RUNS_DIR est celui de l'instance)
+    except OSError:   # folder not accessible (e.g. --dry-run on the PC: RUNS_DIR is the instance's)
         cwd = REPO_ROOT
     py = REPO_ROOT / ".venv" / "bin" / "python"
     py = str(py) if py.exists() else sys.executable
@@ -68,7 +70,7 @@ def main():
         src, out, crops = parse(spec, args.tag, runs_dir)
         ckpt = find_ckpt(src)
         if ckpt is None and not args.dry_run:
-            sys.exit(f"ERREUR: aucun checkpoint dans {src / 'outputs'}")
+            sys.exit(f"ERROR: no checkpoint in {src / 'outputs'}")
         for n in crops:
             cmd = [py, "-m", "src.evaluate", ckpt or "<ckpt>", "--dataset-path", env["MUSDB_PROCESSED"], "-o", str(out / f"eval_crop{n}.json"),
                    "-w", str(workers), "--oracle-cache", env["ORACLE_CACHE_DIR"], "--crop-length", str(n)]
@@ -78,16 +80,16 @@ def main():
         out, n, cmd = job
         target = out / f"eval_crop{n}.json"
         if target.exists() and not args.force:
-            return f"{target.parent.name} crop {n} : déjà fait, saute"
+            return f"{target.parent.name} crop {n}: already done, skipping"
         out.mkdir(parents=True, exist_ok=True)
         with open(out / f"eval_crop{n}.log", "wb") as log:
             log.write(f"$ {shlex.join(cmd)}\n".encode()); log.flush()
             rc = subprocess.run(cmd, cwd=cwd, stdout=log, stderr=subprocess.STDOUT).returncode
         if rc != 0:
             target.unlink(missing_ok=True)
-        return f"{out.name} crop {n} : {'OK' if rc == 0 else f'ECHEC (code {rc}), voir {out / f'eval_crop{n}.log'}'}"
+        return f"{out.name} crop {n} : {'OK' if rc == 0 else f'FAILED (code {rc}), see {out / f'eval_crop{n}.log'}'}"
 
-    print(f"{len(jobs)} évaluation(s), {workers} processus de métriques chacune, cwd {cwd}")
+    print(f"{len(jobs)} evaluation(s), {workers} metric processes each, cwd {cwd}")
     if args.dry_run:
         for out, n, cmd in jobs:
             print(f"\n# {out.name} crop {n}\n  {shlex.join(cmd)}")

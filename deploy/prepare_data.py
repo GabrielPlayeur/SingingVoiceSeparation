@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Vérifie les wav, génère split.json (et le compare au split local de référence), remplit le cache de l'oracle.
+"""Checks the wavs, generates split.json (and compares it with the local reference split), fills the oracle cache.
 
-Lancé par deploy/prepare_data.sh. Chemins lus dans env.sh. Reprenable : le cache saute les morceaux déjà calculés.
+Launched by deploy/prepare_data.sh. Paths read from env.sh. Resumable: the cache skips the tracks already computed.
     python deploy/prepare_data.py [--max-tracks N] [--workers N] [--no-oracle]
 """
 import argparse
@@ -32,11 +32,11 @@ def check_wavs(processed, n_expected=(100, 50)):
     for split, n in zip(("train", "test"), n_expected):
         dirs = list_track_dirs(processed, split)
         if len(dirs) != n:
-            sys.exit(f"ERREUR: {len(dirs)} morceaux dans {processed}/{split} au lieu de {n} : relancer deploy/prepare_data.sh")
+            sys.exit(f"ERROR: {len(dirs)} tracks in {processed}/{split} instead of {n}: rerun deploy/prepare_data.sh")
         for d in dirs:
-            frames = {s: sf.info(os.path.join(d, f"{s}.wav")).frames for s in STEMS}  # lève si un wav manque ou est tronqué
+            frames = {s: sf.info(os.path.join(d, f"{s}.wav")).frames for s in STEMS}  # raises if a wav is missing or truncated
             if len(set(frames.values())) != 1:
-                sys.exit(f"ERREUR: wav de longueurs différentes dans {d} ({frames}) : supprimer ce dossier et relancer")
+                sys.exit(f"ERROR: wavs of different lengths in {d} ({frames}): delete this folder and rerun")
     print(f"wav OK : {n_expected[0]} train + {n_expected[1]} test")
 
 
@@ -47,24 +47,24 @@ def make_split(cfg):
         ref = json.loads(REFERENCE.read_text())
         got = {"train": [os.path.basename(p) for p in train], "val": [os.path.basename(p) for p in val]}
         if got["train"] != ref["train"] or got["val"] != ref["val"]:
-            sys.exit("ERREUR: split différent du split local (deploy/split_reference.json) : résultats non comparables. "
-                     "Vérifier que les 100 morceaux train sont identiques (manifeste) et supprimer split.json.")
-        print(f"split OK : {len(train)} train / {len(val)} val, identique au split local")
+            sys.exit("ERROR: split different from the local split (deploy/split_reference.json): results not comparable. "
+                     "Check that the 100 train tracks are identical (manifest) and delete split.json.")
+        print(f"split OK: {len(train)} train / {len(val)} val, identical to the local split")
     else:
-        print(f"split écrit : {len(train)} train / {len(val)} val (pas de référence locale pour comparer)")
+        print(f"split written: {len(train)} train / {len(val)} val (no local reference to compare with)")
 
 
 def fill_oracle_cache(cfg, cache_dir, workers, limit=None):
     sr, n_fft, hop = cfg.data.sr, cfg.model.n_fft, cfg.model.hop_length
     processed = cfg.data.dataset_path
-    cache = OracleCache(cache_dir, processed, 2, n_fft=n_fft, hop_length=hop)  # même clé que src.evaluate (2 canaux)
+    cache = OracleCache(cache_dir, processed, 2, n_fft=n_fft, hop_length=hop)  # same key as src.evaluate (2 channels)
     todo = []
     for d in list_track_dirs(processed, "test"):
         name = os.path.basename(d)
         if cache.get(name, sf.info(os.path.join(d, "mixture.wav")).frames) is None:
             todo.append((name, d))
     todo = todo[:limit] if limit else todo
-    print(f"oracle : {len(cache.tracks)} morceaux en cache, {len(todo)} à calculer ({workers} processus)")
+    print(f"oracle: {len(cache.tracks)} tracks in cache, {len(todo)} to compute ({workers} processes)")
     if not todo:
         return
     saved = {k: os.environ.get(k) for k in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")}
@@ -75,7 +75,7 @@ def fill_oracle_cache(cfg, cache_dir, workers, limit=None):
         for i, fut in enumerate(cf.as_completed(futs), 1):
             part = fut.result()
             part.pop("kind")
-            cache.put(futs[fut], part)  # écriture atomique après chaque morceau : reprenable
+            cache.put(futs[fut], part)  # atomic write after each track: resumable
             print(f"  oracle {i}/{len(todo)} : {futs[fut]}", flush=True)
     for k, v in saved.items():
         os.environ.pop(k, None) if v is None else os.environ.update({k: v})
@@ -83,9 +83,9 @@ def fill_oracle_cache(cfg, cache_dir, workers, limit=None):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--workers", type=int, default=None, help="processus pour l'oracle (défaut : selon cœurs et RAM, ~3 Go chacun)")
+    ap.add_argument("--workers", type=int, default=None, help="processes for the oracle (default: according to cores and RAM, ~3 GB each)")
     ap.add_argument("--no-oracle", action="store_true")
-    ap.add_argument("--limit-oracle", type=int, default=None, help="test : ne calcule que N morceaux")
+    ap.add_argument("--limit-oracle", type=int, default=None, help="test: only computes N tracks")
     ap.add_argument("--n-train", type=int, default=100)
     ap.add_argument("--n-test", type=int, default=50)
     args = ap.parse_args()
@@ -100,7 +100,7 @@ def main():
     if not args.no_oracle:
         workers = args.workers or max(1, min(cpu_cores(env) - 1, int((mem_total_gb() - 2) // 3)))
         fill_oracle_cache(cfg, cache_dir, workers, args.limit_oracle)
-    print("préparation des données : OK")
+    print("data preparation: OK")
 
 
 if __name__ == "__main__":

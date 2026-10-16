@@ -1,5 +1,5 @@
 # @package _global_
-# Baseline stéréo + STFT multi-résolution (Yamamoto et al. 2020 : convergence spectrale + magnitude log, 3 résolutions) sur la forme d'onde.
+# Stereo baseline + multi-resolution STFT (Yamamoto et al. 2020: spectral convergence + log magnitude, 3 resolutions) on the waveform.
 data:
   channels: 2
 model:

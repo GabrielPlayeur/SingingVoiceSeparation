@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Allège un checkpoint Lightning pour le transfert : garde les poids et les hyper-paramètres, retire l'état de l'optimiseur,
-du scheduler et des callbacks (118 Mo -> ~39 Mo). Suffit pour `load_from_checkpoint`, l'évaluation et les analyses ; PAS pour
-reprendre un entraînement. Usage : python deploy/slim_ckpt.py SRC.ckpt DST.ckpt
+"""Slims a Lightning checkpoint for transfer: keeps the weights and the hyper-parameters, drops the optimizer, scheduler and
+callbacks state (118 MB -> ~39 MB). Enough for `load_from_checkpoint`, the evaluation and the analyses; NOT to resume a
+training. Usage: python deploy/slim_ckpt.py SRC.ckpt DST.ckpt
 """
 import sys
 

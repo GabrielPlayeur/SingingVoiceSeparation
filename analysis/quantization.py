@@ -1,11 +1,14 @@
-"""Figures de l'expérience int8 (experiments/08_int8_quantization.md) à partir des JSON écrits par `python -m src.quantize`.
+"""Figures of the int8 experiment (experiments/08_int8_quantization.md) from the JSONs written by `python -m src.quantize`.
 
     python -m analysis.quantization --sweep outputs/quant/sweep_baseline.json --sensitivity outputs/quant/sensitivity_baseline.json \
-        --qat outputs/quant/baseline.qat_p99_lr1e-4.pt --qat outputs/quant/baseline.qat_p99_lr3e-5.pt
+        --qat outputs/quant/baseline.qat_p99_lr1e-5_cos.pt --qat outputs/quant/baseline.qat_p99_lr3e-5_cos.pt \
+        --qat outputs/quant/baseline.qat_p99_lr1e-4_cos.pt --qat outputs/quant/baseline.qat_p99_lr3e-4_cos.pt \
+        --qat outputs/quant/baseline.qat_minmax_lr1e-4_cos.pt --qat outputs/quant/baseline.qat_fp32_ctrl.pt
 
-Sorties : figures/quant_ptq.png (ablations PTQ + sensibilité par quantificateur), figures/quant_qat.png (courbes de QAT).
-Toutes les valeurs sont des SI-SDR MÉDIANS de validation (240 extraits fixes, ou 120 pour la sensibilité) : une mesure rapide pour
-comparer des réglages ; le SDR de test (50 morceaux) se mesure avec `python -m src.quantize evaluate`.
+Figure labels are built from the stored configs (the setting names inside older JSONs are in French).
+Outputs: figures/quant_ptq.png (PTQ ablations + per-quantizer sensitivity), figures/quant_qat.png (QAT curves).
+All values are MEDIAN validation SI-SDRs (240 fixed crops, or 120 for the sensitivity): a fast measure to
+compare settings; the test SDR (50 tracks) is measured with `python -m src.quantize evaluate`.
 """
 import argparse
 import json
@@ -15,28 +18,45 @@ import matplotlib.pyplot as plt
 
 from ._common import *
 
-PTQ_GROUPS = [("poids seuls", "poids seuls"), ("activations seules", "activations seules"), ("poids + activations", "W8A8")]
+def lr_str(lr):
+    return f"{lr:.0e}".replace("e-0", "e-")   # 1e-05 -> 1e-5
+
+
+LR_COLORS = {1e-5: BLUE, 3e-5: ORANGE, 1e-4: AQUA, 3e-4: "#8a5fd1"}   # colour = learning rate (no palette cycle)
+
+
+def sweep_label(cfg):
+    """English label built from the config (the names in the JSON may be in French). With reduce_range, the activations are
+    on 7 bits (0..127): written A7, as in experiments/08."""
+    a = 7 if cfg["reduce_range"] else cfg["a_bits"]
+    act = {"minmax": "min-max", "mse": "MSE", "percentile": f"p{cfg['percentile']:g}"}[cfg["act_range"]]
+    if cfg["quantize_weights"] and not cfg["quantize_acts"]:
+        detail = "per-tensor" if not cfg["w_per_channel"] else "ConvT per-channel too" if cfg["convt_per_channel"] else "per-channel"
+        return f"weights only, W{cfg['w_bits']}, {detail}" + (", MSE range" if cfg["w_range"] == "mse" else "")
+    head = f"activations only, A{a}" if not cfg["quantize_weights"] else f"W{cfg['w_bits']}A{a}"
+    tail = ", weights MSE" if cfg["quantize_weights"] and cfg["w_range"] == "mse" else ""
+    return f"{head}, {act}{tail}" + ("" if cfg["quantize_input"] else ", input in float")
 
 
 def panel_sweep(ax, data):
-    rows = [r for r in data["rows"] if not r["name"].startswith("fp32")]
-    names = [r["name"] for r in rows]
+    rows = [r for r in data["rows"] if r["config"]["quantize_weights"] or r["config"]["quantize_acts"]]   # without the fp32 control
+    names = [sweep_label(r["config"]) for r in rows]
     vals = np.array([r["delta_median"] for r in rows])
-    colors = [BLUE if n.startswith("poids seuls") else ORANGE if n.startswith("activations seules") else AQUA for n in names]
+    colors = [BLUE if not r["config"]["quantize_acts"] else ORANGE if not r["config"]["quantize_weights"] else AQUA for r in rows]
     y = np.arange(len(rows))[::-1]
     ax.barh(y, vals, color=colors, height=0.7, zorder=3)
     ax.set_yticks(y, names, fontsize=7.5)
     ax.axvline(0, color=INK_2, linewidth=1)
-    ax.set_xlabel("Δ SI-SDR médian de validation vs fp32 (dB)")
+    ax.set_xlabel("Δ median validation SI-SDR vs fp32 (dB)")
     for yi, v in zip(y, vals):
         ax.annotate(f"{v:+.2f}", (v, yi), textcoords="offset points", xytext=(-3 if v < 0 else 3, -3), ha="right" if v < 0 else "left", fontsize=7, color=INK_2)
-    ax.set_title(f"Ablations PTQ (fp32 : {data['fp32']['median']:.2f} dB)")
+    ax.set_title(f"PTQ ablations (simulation, 240 validation crops; fp32 {data['fp32']['median']:.2f} dB)")
     ax.set_xlim(min(vals.min() * 1.2, -0.2), 0.15)
 
 
 def panel_sensitivity(ax, data):
     rows = data["rows"]
-    labels = [f"{r['name']}" + ("" if r["kind"] == "activation" else " (poids)") for r in rows]
+    labels = [f"{r['name']}" + ("" if r["kind"] == "activation" else " (weights)") for r in rows]
     vals = np.array([r["delta_median"] for r in rows])
     colors = [BLUE if r["kind"] == "activation" else ORANGE for r in rows]
     x = np.arange(len(rows))
@@ -44,8 +64,8 @@ def panel_sensitivity(ax, data):
     ax.set_xticks(x, labels, rotation=90, fontsize=7)
     ax.axhline(0, color=INK_2, linewidth=1)
     ax.set_ylabel("Δ SI-SDR (dB)")
-    ax.set_title("Un seul quantificateur à la fois (W8A8 minmax, les autres en flottant)")
-    ax.bar([0], [0], color=BLUE, label="activation"); ax.bar([0], [0], color=ORANGE, label="poids")
+    ax.set_title("One quantizer at a time (W8A7 min-max, all others in float; 120 crops)")
+    ax.bar([0], [0], color=BLUE, label="activation"); ax.bar([0], [0], color=ORANGE, label="weights")
     ax.legend(loc="lower right", fontsize=8)
 
 
@@ -53,7 +73,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sweep")
     ap.add_argument("--sensitivity")
-    ap.add_argument("--qat", action="append", default=[], help="fichier .qat_*.pt (répétable)")
+    ap.add_argument("--qat", action="append", default=[], help=".qat_*.pt file (repeatable)")
     ap.add_argument("--out", default="quant")
     args = ap.parse_args()
     setup_style()
@@ -66,19 +86,35 @@ def main():
         save(fig, f"{args.out}_ptq.png")
     if args.qat:
         import torch
-        fig, ax = plt.subplots(figsize=(8.5, 4.8), constrained_layout=True)
-        colors = [BLUE, ORANGE, AQUA, INK_2, "#8a5fd1"]
-        ref = ptq = None
-        for i, path in enumerate(args.qat):
+        fig, ax = plt.subplots(figsize=(9.5, 4.8), constrained_layout=True)
+        ref = None
+        ends = []
+        for path in args.qat:
             d = torch.load(path, map_location="cpu", weights_only=False)
-            h = d["history"]
-            ref, ptq = d["fp32_val"]["median"], d["ptq_val"]["median"]
-            label = path.split(".qat_")[-1].replace(".pt", "")
-            ax.plot([r["epoch"] for r in h], [r["val_median"] for r in h], marker="o", color=colors[i % 5], linewidth=2, label=f"QAT {label}")
-        ax.axhline(ref, color=INK, linestyle="--", linewidth=1); ax.annotate("fp32", (0, ref), textcoords="offset points", xytext=(2, 3), fontsize=8)
-        ax.set_xlabel("époque de QAT (0 = PTQ de départ)"); ax.set_ylabel("SI-SDR médian de validation (dB)")
-        ax.set_title("Quantization-aware training (W8A8)")
-        ax.legend(fontsize=8)
+            h, cfg = d["history"], d["config"]
+            ref = d["fp32_val"]["median"]
+            control = not (cfg["quantize_weights"] or cfg["quantize_acts"])
+            init = "min-max" if cfg["act_range"] == "minmax" else f"p{cfg['percentile']:g}"
+            sched = "cosine" if d.get("cosine") else "constant"
+            if control:
+                label, color, ls, mk = f"fp32 control (no quantizer), LR {lr_str(d['lr'])}", INK_2, "--", "s"
+            else:
+                label, color, mk = f"QAT, {init} init, LR {lr_str(d['lr'])}" + ("" if sched == "cosine" else ", constant LR"), \
+                    LR_COLORS.get(d["lr"], INK), "o"
+                ls = ":" if init == "min-max" else "-"
+            xs, ys = [r["epoch"] for r in h], [r["val_median"] for r in h]
+            ax.plot(xs, ys, marker=mk, markersize=5, color=color, linestyle=ls, linewidth=2, label=label)
+            ends.append((ys[-1], xs[-1], label.split(",")[0] if control else f"{init}, {lr_str(d['lr'])}"))
+        last = -np.inf   # direct labels at the end of the curves, spaced apart so they do not overlap
+        for y, x, text in sorted(ends):
+            last = max(y, last + 0.035)
+            ax.text(x + 0.25, last, text, fontsize=7.5, color=INK_2, va="center")
+        ax.axhline(ref, color=INK, linestyle="--", linewidth=1)
+        ax.annotate(f"fp32 {ref:.2f} dB", (0, ref), textcoords="offset points", xytext=(2, 4), fontsize=8)
+        ax.set_xlim(-0.3, max(r[1] for r in ends) + 2.2)
+        ax.set_xlabel("QAT epoch (0 = starting PTQ model)"); ax.set_ylabel("median validation SI-SDR (dB, 240 crops)")
+        ax.set_title("Quantization-aware training, W8A7 (simulation); colour = learning rate, dotted = min-max init")
+        ax.legend(fontsize=7.5, loc="lower right")
         save(fig, f"{args.out}_qat.png")
 
 

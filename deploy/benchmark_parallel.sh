@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# (serveur) Mesure le débit total de la baseline avec 1, puis 2, puis 3 entraînements simultanés, pour choisir --parallel.
-# Chaque entraînement fait EPOCHS epochs (epoch_size de la config = 63 pas), sans évaluation. Mesure aussi le pic de VRAM et la
-# RAM minimale disponible pendant les runs. Le temps de démarrage (lecture de la validation) est inclus : il pèse pareil sur chaque cas.
-# Usage : deploy/benchmark_parallel.sh [EPOCHS=6] [MAX_PARALLEL=3]
+# (server) Measures the total throughput of the baseline with 1, then 2, then 3 simultaneous trainings, to choose --parallel.
+# Each training runs EPOCHS epochs (config epoch_size = 63 steps), without evaluation. Also measures the VRAM peak and the
+# minimum available RAM during the runs. The start-up time (reading the validation set) is included: it weighs the same in each case.
+# Usage: deploy/benchmark_parallel.sh [EPOCHS=6] [MAX_PARALLEL=3]
 # shellcheck source=deploy/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 EPOCHS="${1:-6}"; MAX_PARALLEL="${2:-3}"
-cd "$REPO_ROOT" || die "dépôt introuvable : $REPO_ROOT"
-[ -d "$MUSDB_PROCESSED/train" ] || die "données prétraitées absentes ($MUSDB_PROCESSED) : lancer deploy/prepare_data.sh"
+cd "$REPO_ROOT" || die "repository not found: $REPO_ROOT"
+[ -d "$MUSDB_PROCESSED/train" ] || die "preprocessed data missing ($MUSDB_PROCESSED): run deploy/prepare_data.sh"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/svs_bench.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 cores="${CPU_CORES:-$(nproc)}"
@@ -37,7 +37,7 @@ run_case() {
     kill "$sampler" 2>/dev/null || true; wait "$sampler" 2>/dev/null || true
     if [ "$failed" -ne 0 ]; then
         tail -n 15 "$WORK"/log_"${n}"_*.txt >&2
-        die "au moins un entraînement a échoué avec $n processus (log ci-dessus ; OOM ? voir free -g et nvidia-smi)"
+        die "at least one training failed with $n processes (log above; OOM? see free -g and nvidia-smi)"
     fi
     local secs minmem maxvram
     secs=$(awk -v s="$start" -v e="$end" 'BEGIN {printf "%.0f", e - s}')
@@ -48,15 +48,15 @@ run_case() {
 
 : > "$WORK/results.tsv"
 for n in $(seq 1 "$MAX_PARALLEL"); do
-    log "cas $n processus simultané(s), $EPOCHS epochs chacun ..."
+    log "case $n simultaneous process(es), $EPOCHS epochs each ..."
     run_case "$n"
 done
 
 echo
-printf '%-9s %-10s %-22s %-18s %-14s\n' "parallèle" "durée (s)" "débit total (epoch/min)" "RAM dispo min (Mo)" "VRAM max (Mo)"
+printf '%-9s %-10s %-22s %-18s %-14s\n' "parallel" "duration (s)" "total throughput (epoch/min)" "min free RAM (MB)" "max VRAM (MB)"
 while IFS=$'\t' read -r n secs mem vram; do
     printf '%-9s %-10s %-22s %-18s %-14s\n' "$n" "$secs" "$(awk -v n="$n" -v e="$EPOCHS" -v s="$secs" 'BEGIN {printf "%.1f", n * e * 60 / s}')" "$mem" "$vram"
 done < "$WORK/results.tsv"
 echo
-echo "Choisir le plus grand parallèle dont le débit total progresse encore nettement ET dont la RAM dispo min reste > ~3000 Mo"
-echo "(l'évaluation, en plus, consomme ~2,5 Go par processus de métriques). Puis : run_queue.py --parallel N"
+echo "Choose the largest parallelism whose total throughput still clearly improves AND whose min free RAM stays > ~3000 MB"
+echo "(the evaluation, on top, uses ~2.5 GB per metrics process). Then: run_queue.py --parallel N"

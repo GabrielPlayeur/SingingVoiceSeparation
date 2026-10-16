@@ -1,28 +1,28 @@
-"""Quantification int8 du U-Net (experiments/08_int8_quantization.md).
+"""int8 quantization of the U-Net (experiments/08_int8_quantization.md).
 
-Deux chemins qui partagent les MÊMES emplacements de quantificateurs :
+Two paths that share the SAME quantizer locations:
 
-  - SIMULATION (`SimUNet`) : quantification « fictive » en virgule flottante (Nagel et al. 2021, § 2.3 ; Krishnamoorthi 2018, § 2.4).
-    Tourne sur GPU, accepte n'importe quelle largeur de bits (W4, W6...), sert aux ablations, à l'analyse de sensibilité et au QAT
-    (gradient par STE, intégré à `torch.fake_quantize_*`).
-  - RÉEL (`export_int8`) : vrais noyaux int8 de PyTorch (`torch.ao.quantization`, mode eager, moteur x86/fbgemm, CPU seulement),
-    pour mesurer la taille sur disque et la latence. ⚠ `torch.ao.quantization` est déclaré obsolète dans PyTorch 2.10 (migration vers
-    torchao) : il reste fonctionnel mais la version est figée par uv.lock.
+  - SIMULATION (`SimUNet`): "fake" quantization in floating point (Nagel et al. 2021, § 2.3; Krishnamoorthi 2018, § 2.4).
+    Runs on GPU, accepts any bit width (W4, W6...), used for ablations, the sensitivity analysis and QAT
+    (STE gradient, built into `torch.fake_quantize_*`).
+  - REAL (`export_int8`): genuine PyTorch int8 kernels (`torch.ao.quantization`, eager mode, x86/fbgemm engine, CPU only),
+    to measure the size on disk and the latency. ⚠ `torch.ao.quantization` is deprecated in PyTorch 2.10 (migration to
+    torchao): it still works and the version is pinned by uv.lock.
 
-Choix communs aux deux chemins (valeurs et sources dans la page d'expérience) :
-  - BatchNorm repliée statiquement dans la convolution précédente (Nagel § 2.3.1 et § 4.2 : le repliement statique est aussi bon que
-    les variantes plus complexes quand on part d'un modèle entraîné). Vérifié : écart de sortie ~1e-5.
-  - Poids : symétriques, par canal pour les Conv2d (supporté) ; par tenseur pour les ConvTranspose2d dans le chemin RÉEL, car
-    `torch.ao` n'a pas de quantification par canal pour elles (« Per channel weight observer is not supported yet for
-    ConvTranspose{n}d ») ; la simulation peut aussi les faire par canal (`convt_per_channel=True`) pour mesurer ce que ça coûte.
-  - Activations : asymétriques (affines), par tenseur (Nagel § 2.4.1 et § 2.4.2, Krishnamoorthi § 2.6).
-  - LeakyReLU n'est pas fusionnable avec la convolution (seule ReLU l'est) : une sortie de convolution est quantifiée AVANT et APRÈS
-    LeakyReLU, comme le fait `torch.ao` et comme le prévoit Nagel § 2.3.2. ReLU (décodeur) ne change pas la grille.
-  - Concaténation des skip-connections : requantification sur une grille commune (Nagel § 2.3.3, Krishnamoorthi § 3.2.1), un
-    quantificateur à la sortie de chaque `cat`.
-  - Sigmoïde finale en virgule flottante (le logit de la 1x1 est déquantifié avant).
-  - `reduce_range=True` : activations sur 7 bits (0..127). Recommandation de PyTorch pour les CPU sans VNNI (AVX2 seulement, comme ici) :
-    les noyaux fbgemm accumulent u8 x s8 par paires en int16 saturant.
+Choices common to both paths (values and sources in the experiment page):
+  - BatchNorm statically folded into the preceding convolution (Nagel § 2.3.1 and § 4.2: static folding is as good as the
+    more complex variants when starting from a trained model). Checked: output difference ~1e-5.
+  - Weights: symmetric, per channel for Conv2d (supported); per tensor for ConvTranspose2d in the REAL path, because
+    `torch.ao` has no per-channel quantization for them ("Per channel weight observer is not supported yet for
+    ConvTranspose{n}d"); the simulation can also do them per channel (`convt_per_channel=True`) to measure what that costs.
+  - Activations: asymmetric (affine), per tensor (Nagel § 2.4.1 and § 2.4.2, Krishnamoorthi § 2.6).
+  - LeakyReLU cannot be fused with the convolution (only ReLU can): a convolution output is quantized BEFORE and AFTER
+    LeakyReLU, as `torch.ao` does and as Nagel § 2.3.2 foresees. ReLU (decoder) does not change the grid.
+  - Concatenation of skip connections: requantization on a common grid (Nagel § 2.3.3, Krishnamoorthi § 3.2.1), one
+    quantizer at the output of each `cat`.
+  - Final sigmoid in floating point (the logit of the 1x1 is dequantized before).
+  - `reduce_range=True`: activations on 7 bits (0..127). PyTorch's recommendation for CPUs without VNNI (AVX2 only, as here):
+    the fbgemm kernels accumulate u8 x s8 in pairs in saturating int16.
 """
 import copy
 import dataclasses
@@ -38,7 +38,7 @@ from torch.nn.utils.fusion import fuse_conv_bn_eval
 
 from .models.unet import UNet
 
-SAMPLES_PER_BATCH = 100_000      # valeurs conservées par quantificateur et par lot pour les plages « percentile » et « mse »
+SAMPLES_PER_BATCH = 100_000      # values kept per quantizer and per batch for the "percentile" and "mse" ranges
 MAX_SAMPLES = 1_000_000
 
 
@@ -47,12 +47,12 @@ class QuantConfig:
     w_bits: int = 8
     a_bits: int = 8
     w_per_channel: bool = True        # Conv2d (encodeurs, 1x1 finale)
-    convt_per_channel: bool = False   # ConvTranspose2d : False = comme le chemin réel (par tenseur)
+    convt_per_channel: bool = False   # ConvTranspose2d: False = like the real path (per tensor)
     w_range: str = "minmax"           # minmax | mse
     act_range: str = "minmax"         # minmax | percentile | mse
     percentile: float = 99.99
-    reduce_range: bool = True         # activations sur a_bits - 1 bits (voir l'en-tête)
-    quantize_input: bool = True       # False : l'entrée du réseau reste en flottant (la 1re convolution reçoit des flottants)
+    reduce_range: bool = True         # activations on a_bits - 1 bits (see the header)
+    quantize_input: bool = True       # False: the network input stays in floating point (the 1st convolution receives floats)
     quantize_weights: bool = True
     quantize_acts: bool = True
 
@@ -65,12 +65,12 @@ class QuantConfig:
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Repliement de la BatchNorm
+# BatchNorm folding
 # ----------------------------------------------------------------------------------------------------------------------
 
 def fold_unet(unet: UNet) -> UNet:
-    """Copie du U-Net où chaque BatchNorm est repliée dans la (dé)convolution qui la précède (mode eval : statistiques de
-    l'entraînement). La dernière déconvolution et la 1x1 finale n'ont pas de BatchNorm."""
+    """Copy of the U-Net where each BatchNorm is folded into the (de)convolution that precedes it (eval mode: training
+    statistics). The last deconvolution and the final 1x1 have no BatchNorm."""
     u = copy.deepcopy(unet).eval()
     for e in u.encoders:
         e.conv = fuse_conv_bn_eval(e.conv, e.bn)
@@ -83,12 +83,12 @@ def fold_unet(unet: UNet) -> UNet:
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Quantificateurs
+# Quantizers
 # ----------------------------------------------------------------------------------------------------------------------
 
 class ActQuantizer(nn.Module):
-    """Quantificateur d'activation affine par tenseur. Modes : off (identité) | observe (identité + statistiques) |
-    quant (quantification fictive, plage figée) | qat (comme quant, la plage suit une moyenne mobile pendant l'entraînement)."""
+    """Per-tensor affine activation quantizer. Modes: off (identity) | observe (identity + statistics) |
+    quant (fake quantization, frozen range) | qat (like quant, the range follows a moving average during training)."""
 
     def __init__(self, qmin, qmax, ema=0.01):
         super().__init__()
@@ -105,7 +105,7 @@ class ActQuantizer(nn.Module):
         self._samples, self._n_samples = [], 0
 
     def set_range(self, lo, hi):
-        """Fixe la plage [lo, hi] (jamais vide, contient 0 comme tout observateur de torch.ao) et en déduit échelle et point zéro."""
+        """Sets the range [lo, hi] (never empty, contains 0 like any torch.ao observer) and derives the scale and zero point from it."""
         self.observer.min_val.fill_(float(lo))
         self.observer.max_val.fill_(float(hi))
         scale, zp = self.observer.calculate_qparams()
@@ -141,8 +141,8 @@ class ActQuantizer(nn.Module):
 
     @torch.no_grad()
     def finalize(self, method="minmax", percentile=99.99):
-        """Calcule la plage depuis ce qui a été observé. minmax : extrêmes ; percentile : quantiles (100-p, p) ; mse : plage
-        réduite par un facteur r qui minimise l'erreur quadratique de quantification sur l'échantillon (recherche en grille,
+        """Computes the range from what was observed. minmax: extremes; percentile: quantiles (100-p, p); mse: range
+        shrunk by a factor r that minimizes the quantization squared error on the sample (grid search,
         Nagel § 3.1)."""
         lo, hi = float(self.observer.min_val), float(self.observer.max_val)
         if method != "minmax" and self._samples:
@@ -160,7 +160,7 @@ class ActQuantizer(nn.Module):
                         best = (float(err), a, b)
                 lo, hi = best[1], best[2]
             else:
-                raise ValueError(f"act_range={method!r} inconnu (minmax | percentile | mse)")
+                raise ValueError(f"unknown act_range={method!r} (minmax | percentile | mse)")
         if hi - lo < 1e-12:
             hi = lo + 1e-12
         self.set_range(lo, hi)
@@ -168,10 +168,10 @@ class ActQuantizer(nn.Module):
 
 
 class WeightQuantizer(nn.Module):
-    """Quantificateur de poids symétrique, par canal ou par tenseur. `axis` : axe des canaux de sortie du poids (0 pour Conv2d,
-    1 pour ConvTranspose2d). Modes : off | quant (paramètres figés par `finalize`) | qat (recalculés à chaque passe : les poids
-    bougent). Échelle = max|w| / ((qmax - qmin) / 2), point zéro 0 : la formule des observateurs symétriques de torch.ao, qui
-    est aussi celle de la conversion réelle."""
+    """Symmetric weight quantizer, per channel or per tensor. `axis`: output-channel axis of the weight (0 for Conv2d,
+    1 for ConvTranspose2d). Modes: off | quant (parameters frozen by `finalize`) | qat (recomputed at every pass: the weights
+    move). Scale = max|w| / ((qmax - qmin) / 2), zero point 0: the formula of torch.ao's symmetric observers, which is
+    also the one of the real conversion."""
 
     EPS = float(torch.finfo(torch.float32).eps)
 
@@ -181,7 +181,7 @@ class WeightQuantizer(nn.Module):
         self.axis, self.per_channel, self.method = axis, per_channel, method
         self.mode = "off"
         self.scale, self.zero_point = None, None
-        self.clip = None   # |w| maximal retenu (par canal / tenseur) : l'export réel écrête les poids à cette valeur (plage MSE)
+        self.clip = None   # retained max |w| (per channel / tensor): the real export clips the weights to this value (MSE range)
 
     def _absmax(self, w):
         if self.per_channel:
@@ -197,7 +197,7 @@ class WeightQuantizer(nn.Module):
         return scale, torch.zeros_like(scale, dtype=torch.int32)
 
     def _mse_clip(self, w, mx):
-        """Plage |w| <= r x max|w| qui minimise l'erreur quadratique, r cherché dans [0.3, 1] (indépendamment par canal si besoin)."""
+        """Range |w| <= r x max|w| that minimizes the squared error, r searched in [0.3, 1] (independently per channel if needed)."""
         wd = w.movedim(self.axis, 0).reshape(w.shape[self.axis], -1) if self.per_channel else w.reshape(1, -1)
         mx = mx.clamp_min(1e-12).reshape(-1, 1)
         best_err, best_r = None, None
@@ -223,22 +223,22 @@ class WeightQuantizer(nn.Module):
         if self.mode == "qat":
             with torch.no_grad():
                 self.scale, self.zero_point = self._qparams(w)
-        scale = self.scale.to(w.device)   # attribut simple (pas un buffer) : suit le poids si le réseau change de périphérique
+        scale = self.scale.to(w.device)   # plain attribute (not a buffer): follows the weight if the network changes device
         if self.per_channel:
             return torch.fake_quantize_per_channel_affine(w, scale, self.zero_point.to(w.device), self.axis, self.qmin, self.qmax)
         return torch.fake_quantize_per_tensor_affine(w, float(scale), 0, self.qmin, self.qmax)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Réseau simulé
+# Simulated network
 # ----------------------------------------------------------------------------------------------------------------------
 
 class SimUNet(nn.Module):
-    """U-Net replié (BatchNorm absorbée) avec des quantificateurs fictifs aux mêmes endroits que le chemin int8 réel.
+    """Folded U-Net (BatchNorm absorbed) with fake quantizers at the same places as the real int8 path.
 
-    Quantificateurs d'activation (noms) : `in` (entrée), `enc{i}.conv` puis `enc{i}.act` (avant/après LeakyReLU), `dec{i}.conv`
-    (sortie de déconvolution ; le ReLU du décodeur ne change pas la grille), `cat{i}` (concaténation), `final.conv` (logit).
-    Quantificateurs de poids : `enc{i}`, `dec{i}`, `final`."""
+    Activation quantizers (names): `in` (input), `enc{i}.conv` then `enc{i}.act` (before/after LeakyReLU), `dec{i}.conv`
+    (deconvolution output; the decoder ReLU does not change the grid), `cat{i}` (concatenation), `final.conv` (logit).
+    Weight quantizers: `enc{i}`, `dec{i}`, `final`."""
 
     def __init__(self, unet: UNet, cfg: QuantConfig = None):
         super().__init__()
@@ -260,13 +260,13 @@ class SimUNet(nn.Module):
             self.wq[f"dec{i}"] = WeightQuantizer(wb, pt, 1, self.cfg.w_range)
         self.wq["final"] = WeightQuantizer(wb, pc, 0, self.cfg.w_range)
 
-    # -- accès
+    # -- access
     def Q(self, name):
         return self.aq[name.replace(".", "_")]
 
     def set_mode(self, act=None, weights=None, only_act=None, only_w=None):
-        """act ∈ {off, observe, quant, qat} ; weights ∈ {off, quant, qat}. only_act / only_w : listes de noms, les autres passent
-        en `off` (analyse de sensibilité par quantificateur)."""
+        """act ∈ {off, observe, quant, qat}; weights ∈ {off, quant, qat}. only_act / only_w: lists of names, the others go
+        to `off` (per-quantizer sensitivity analysis)."""
         for n in self.act_names:
             if act is not None:
                 on = only_act is None or n in only_act
@@ -327,14 +327,14 @@ class SimUNet(nn.Module):
 
 @torch.no_grad()
 def calibrate(sim: SimUNet, batches, quantize_weights=True, quantize_acts=True):
-    """Passe les `batches` (entrées du réseau, (B, C, F, T)) en flottant pour observer les plages d'activation, fixe les plages et
-    les paramètres de poids, puis active la quantification. L'observation se fait sur le modèle FLOTTANT (comme `prepare` de
-    torch.ao), pas sur le modèle déjà quantifié."""
+    """Runs the `batches` (network inputs, (B, C, F, T)) in floating point to observe the activation ranges, fixes the ranges and
+    the weight parameters, then enables quantization. Observation is done on the FLOAT model (like torch.ao's `prepare`),
+    not on the already quantized model."""
     sim.eval()
     for n in sim.act_names:
         sim.Q(n).reset()
     sim.set_mode(act="observe", weights="off")
-    with torch.random.fork_rng():   # sous-échantillonnage des activations reproductible, sans toucher à l'état aléatoire de l'appelant
+    with torch.random.fork_rng():   # reproducible subsampling of the activations, without touching the caller's random state
         torch.manual_seed(0)
         for x in batches:
             sim(x)
@@ -345,11 +345,11 @@ def calibrate(sim: SimUNet, batches, quantize_weights=True, quantize_acts=True):
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Export int8 réel (torch.ao, CPU)
+# Real int8 export (torch.ao, CPU)
 # ----------------------------------------------------------------------------------------------------------------------
 
 class Int8UNet(nn.Module):
-    """Même graphe que `SimUNet`, écrit pour la quantification eager de torch.ao (QuantStub, FloatFunctional.cat)."""
+    """Same graph as `SimUNet`, written for torch.ao eager quantization (QuantStub, FloatFunctional.cat)."""
 
     def __init__(self, folded: UNet):
         super().__init__()
@@ -379,17 +379,17 @@ class Int8UNet(nn.Module):
 
 
 def export_int8(sim: SimUNet, engine: str = "x86") -> Int8UNet:
-    """Convertit en vrai modèle int8 (CPU) avec les mêmes plages que la simulation (plages d'activation injectées dans les
-    observateurs ; poids : minmax du poids éventuellement écrêté à la plage du MSE, ce qui donne la même grille). Réservé à
-    W8A8 avec les quantificateurs par défaut."""
+    """Converts to a real int8 model (CPU) with the same ranges as the simulation (activation ranges injected into the
+    observers; weights: minmax of the weight, possibly clipped to the MSE range, which gives the same grid). Reserved for
+    W8A8 with the default quantizers."""
     cfg = sim.cfg
     if cfg.w_bits != 8 or cfg.a_bits != 8 or not (cfg.quantize_weights and cfg.quantize_acts and cfg.quantize_input):
-        raise ValueError("export réel : W8A8 avec entrée quantifiée uniquement")
+        raise ValueError("real export: W8A8 with quantized input only")
     if cfg.convt_per_channel:
-        raise ValueError("export réel : les ConvTranspose2d ne se quantifient que par tenseur dans torch.ao")
+        raise ValueError("real export: ConvTranspose2d can only be quantized per tensor in torch.ao")
     torch.backends.quantized.engine = engine
     folded = copy.deepcopy(sim.unet).cpu().eval()
-    # poids écrêtés à la plage retenue (no-op en minmax)
+    # weights clipped to the retained range (no-op with minmax)
     with torch.no_grad():
         for name, layer in zip([n for n, _ in sim._layers()], [l for _, l in _layers_of(folded)]):
             q = sim.wq[name]
@@ -409,7 +409,7 @@ def export_int8(sim: SimUNet, engine: str = "x86") -> Int8UNet:
         enc.conv.qconfig = aq.QConfig(activation=act, weight=w_chan if cfg.w_per_channel else w_ten)
     folded.final[0].qconfig = aq.QConfig(activation=act, weight=w_chan if cfg.w_per_channel else w_ten)
     prepared = aq.prepare(net)
-    # plages d'activation : celles de la simulation
+    # activation ranges: those of the simulation
     targets = {"in": prepared.quant}
     for i, enc in enumerate(prepared.u.encoders):
         targets[f"enc{i}.conv"], targets[f"enc{i}.act"] = enc.conv, enc.act
@@ -432,11 +432,11 @@ def _layers_of(unet):
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Mesures : taille, latence
+# Measurements: size, latency
 # ----------------------------------------------------------------------------------------------------------------------
 
 def state_dict_bytes(module: nn.Module) -> int:
-    """Taille sur disque du `state_dict` sérialisé (ce qu'on livrerait)."""
+    """On-disk size of the serialized `state_dict` (what would be shipped)."""
     import io
     buf = io.BytesIO()
     torch.save(module.state_dict(), buf)
@@ -445,7 +445,7 @@ def state_dict_bytes(module: nn.Module) -> int:
 
 @torch.no_grad()
 def latency_ms(model: nn.Module, x: torch.Tensor, threads: int, repeats: int = 7, warmup: int = 2):
-    """Médiane (et min) du temps d'une passe avant sur CPU, en ms, avec `threads` threads intra-op."""
+    """Median (and min) time of a forward pass on CPU, in ms, with `threads` intra-op threads."""
     prev = torch.get_num_threads()
     torch.set_num_threads(threads)
     try:

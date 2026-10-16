@@ -1,4 +1,4 @@
-"""Style, palette et lecture des métadonnées partagés par les scripts d'analyse."""
+"""Style, palette and metadata reading shared by the analysis scripts."""
 import json
 import os
 import re
@@ -14,7 +14,7 @@ FIG_DIR = os.path.join(ROOT, "figures")
 MUSDB = os.path.join(ROOT, "musdb18")
 PROCESSED = os.path.join(MUSDB, "processed")
 
-# 3 premiers slots catégoriels de la palette de référence (valident aussi en all-pairs)
+# first 3 categorical slots of the reference palette (also valid in all-pairs)
 BLUE, ORANGE, AQUA = "#2a78d6", "#eb6834", "#1baf7a"
 INK, INK_2, GRID = "#0b0b0b", "#52514e", "#e4e3df"
 
@@ -43,13 +43,13 @@ def artist(track_name):
     return track_name.split(" - ")[0]
 
 
-# Noms différents entre musdb18/README.md et les dossiers (typos du README MUSDB), et morceau absent du README.
+# Names that differ between musdb18/README.md and the folders (typos in the MUSDB README), and a track missing from the README.
 ALIASES = {"Patrick Talbot - Set Me Free": "Patrick Talbot - Set Free Me"}
-UNKNOWN = {"genre": "Inconnu", "origin": "Inconnu"}
+UNKNOWN = {"genre": "Unknown", "origin": "Unknown"}
 
 
 class Metadata(dict):
-    """Dictionnaire {titre: {genre, origin}} tolérant aux typos : clé normalisée, alias, valeur « Inconnu » sinon."""
+    """Dictionary {title: {genre, origin}} tolerant to typos: normalized key, aliases, value "Unknown" otherwise."""
 
     @staticmethod
     def _key(name):
@@ -63,7 +63,7 @@ class Metadata(dict):
 
 
 def read_metadata():
-    """{titre: {genre, origin}} lu dans musdb18/README.md (lignes « - Artiste - Titre,Genre,Origine,Licence »)."""
+    """{title: {genre, origin}} read from musdb18/README.md (lines "- Artist - Title,Genre,Origin,License")."""
     meta = Metadata()
     with open(os.path.join(MUSDB, "README.md")) as f:
         for line in f:
@@ -74,7 +74,7 @@ def read_metadata():
 
 
 def track_dirs():
-    """{'train': [...], 'val': [...], 'test': [...]} selon musdb18/split.json (val = sous-ensemble du train officiel)."""
+    """{'train': [...], 'val': [...], 'test': [...]} according to musdb18/split.json (val = subset of the official train)."""
     with open(os.path.join(MUSDB, "split.json")) as f:
         split = json.load(f)
     test = sorted(os.listdir(os.path.join(PROCESSED, "test")))

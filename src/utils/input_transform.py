@@ -1,32 +1,32 @@
-"""Transformation de l'amplitude STFT avant le U-Net (ROADMAP, étape 2a, limite B10 du walkthrough).
+"""Transformation of the STFT amplitude before the U-Net (ROADMAP, step 2a, walkthrough limit B10).
 
-Le masque reste appliqué à l'amplitude LINÉAIRE du mélange (`voc_est = masque * mix_amp`) : seule l'entrée du réseau change.
+The mask is still applied to the LINEAR amplitude of the mixture (`voc_est = mask * mix_amp`): only the network input changes.
 
     none  : |X|                                  (baseline)
-    power : |X| ** c                             loi de puissance, c = 0,3 par défaut : exposant de Wilson et al. 2018 et de
-                                                 Braun & Tashev 2020 (speech enhancement, à confirmer sur la musique)
-    log1p : log(1 + |X|)                         compresse les bins forts (> 1) ; quasi identité sous 1 (87 % des bins sont < 1)
-    sqrt  : |X| ** 0.5                           loi de puissance c = 0,5
-    norm  : |X| / moyenne(|X|) par exemple       invariant au gain exact ; la moyenne est calculée sur (canaux, fréquences, trames)
-                                                 de l'extrait de 6 s, donc aussi à l'inférence (par fenêtre, sans état)
+    power : |X| ** c                             power law, c = 0.3 by default: exponent of Wilson et al. 2018 and of
+                                                 Braun & Tashev 2020 (speech enhancement, to be confirmed on music)
+    log1p : log(1 + |X|)                         compresses the strong bins (> 1); almost the identity below 1 (87 % of the bins are < 1)
+    sqrt  : |X| ** 0.5                           power law c = 0.5
+    norm  : |X| / mean(|X|) per example          invariant to an exact gain; the mean is taken over (channels, frequencies, frames)
+                                                 of the 6 s crop, hence also at inference (per window, stateless)
 
-La même loi de puissance peut aussi être appliquée dans la loss (`compress`) : c'est l'objet de Braun & Tashev.
+The same power law can also be applied in the loss (`compress`): this is the subject of Braun & Tashev.
 
-Aucune n'est « invariante au volume » sauf `norm` : voir analysis/input_amplitude.py pour la mesure.
+None is "volume invariant" except `norm`: see analysis/input_amplitude.py for the measurement.
 """
 import torch
 
 INPUT_TRANSFORMS = ("none", "power", "log1p", "sqrt", "norm")
-EPS = 1e-8  # plancher de la loi de puissance : x ** c a une dérivée infinie en 0 pour c < 1
+EPS = 1e-8  # floor of the power law: x ** c has an infinite derivative at 0 for c < 1
 
 
 def compress(amp: torch.Tensor, power: float) -> torch.Tensor:
-    """Loi de puissance (amp + EPS) ** power ; power = 1 rend amp inchangé (baseline exacte)."""
+    """Power law (amp + EPS) ** power; power = 1 returns amp unchanged (exact baseline)."""
     return amp if power == 1.0 else (amp + EPS) ** power
 
 
 def transform_amplitude(amp: torch.Tensor, kind: str, power: float = 0.3) -> torch.Tensor:
-    """amp : (B, C, F, T) amplitudes >= 0 -> même forme. `power` ne sert que pour kind == "power"."""
+    """amp: (B, C, F, T) amplitudes >= 0 -> same shape. `power` is only used when kind == "power"."""
     if kind == "none":
         return amp
     if kind == "power":
@@ -36,5 +36,5 @@ def transform_amplitude(amp: torch.Tensor, kind: str, power: float = 0.3) -> tor
     if kind == "sqrt":
         return torch.sqrt(amp)
     if kind == "norm":
-        return amp / amp.mean(dim=(1, 2, 3), keepdim=True).clamp_min(1e-8)  # clamp : extrait entièrement silencieux
-    raise ValueError(f"input_transform={kind!r} inconnu, choisir parmi {INPUT_TRANSFORMS}")
+        return amp / amp.mean(dim=(1, 2, 3), keepdim=True).clamp_min(1e-8)  # clamp: fully silent crop
+    raise ValueError(f"unknown input_transform={kind!r}, choose among {INPUT_TRANSFORMS}")

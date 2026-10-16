@@ -1,11 +1,13 @@
 in_channels: ${data.channels}
 base_channels: 16
 depth: 6
+legacy_head: false     # true : BN + ReLU in the last decoder block (bug fixed in 68ba08f), only to reproduce the pre-fix runs
 n_fft: 2048
 hop_length: 512
 learning_rate: 0.001
 input_transform: none   # none | log1p | sqrt | norm
-input_power: 0.3        # exposant quand input_transform=power
-loss_power: 1.0         # exposant de compression de la loss (1.0 = L1 linéaire, baseline)
-loss_type: amp_l1       # amp_l1 | sisdr | wsdr | mrstft (loss sur la forme d'onde : voir utils/losses.py)
-scheduler: none         # none (lr constant) | cosine (décroissance en cosinus jusqu'à 0 sur tout l'entraînement, sans redémarrage)
+input_power: 0.3        # exponent when input_transform=power
+loss_power: 1.0         # compression exponent of the loss (1.0 = linear L1, baseline)
+loss_type: amp_l1       # amp_l1 | sisdr | wsdr | mrstft (waveform losses: see utils/losses.py)
+scheduler: none         # none (constant lr) | cosine (cosine decay to 0 over the whole run, no restart) | wsd (constant lr, then linear decay to 0)
+decay_fraction: 0.2     # wsd only: share of the total steps spent decaying (the last 20 %)

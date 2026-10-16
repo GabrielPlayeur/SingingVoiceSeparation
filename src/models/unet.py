@@ -13,6 +13,8 @@ class EncoderBlock(nn.Module):
         return self.act(self.bn(self.conv(x)))
 
 class DecoderBlock(nn.Module):
+    """Transposed conv (+ BN + ReLU unless `return_logit`) (+ dropout). With `return_logit` the block outputs the raw
+    deconvolution, so the 1x1 conv + sigmoid that follow see an unbounded signal (see `UNet(legacy_head=...)`)."""
     def __init__(self, in_ch, out_ch, dropout=False, return_logit=False):
         super().__init__()
         self.return_logit = return_logit
@@ -29,7 +31,11 @@ class DecoderBlock(nn.Module):
         return self.dropout(x)
 
 class UNet(nn.Module):
-    def __init__(self, base_channels: int, depth: int, in_channels: int = 1):
+    """`legacy_head=True` restores BN + ReLU in the last decoder block, as before commit 68ba08f. In that block
+    (`in_channels` output channels) the BN rescales and the ReLU clips the head input to >= 0 before the 1x1 conv + sigmoid:
+    the bug that commit fixed. Kept only to reproduce the pre-fix runs and to measure the bug's effect (same state_dict keys
+    as the pre-fix model, so old checkpoints load with `legacy_head=True`)."""
+    def __init__(self, base_channels: int, depth: int, in_channels: int = 1, legacy_head: bool = False):
         super().__init__()
 
         chs = [in_channels] + [base_channels * 2**i for i in range(depth)]
@@ -41,8 +47,8 @@ class UNet(nn.Module):
         for i in range(depth):
             in_ch = chs[depth - i] if i == 0 else chs[depth - i] * 2
             out_ch = chs[depth - i - 1]
-            dropout = i < 3  # 50% dropout decodeur 1,2,3
-            return_logit = i == depth-1
+            dropout = i < 3  # 50% dropout on decoder blocks 1, 2, 3 (Jansson et al. 2017)
+            return_logit = i == depth - 1 and not legacy_head
             self.decoders.append(DecoderBlock(in_ch, out_ch, dropout=dropout, return_logit=return_logit))
 
         self.final = nn.Sequential(
@@ -71,7 +77,7 @@ class UNet(nn.Module):
 
 if __name__ == "__main__":
     model = UNet(base_channels=16, depth=6, in_channels=2)
-    dummy = torch.randn(2, 2, 512, 128)  # (batch, canal, fréquences, temps)
+    dummy = torch.randn(2, 2, 512, 128)  # (batch, channel, frequency, time)
     out = model(dummy)
     print(out.shape)
     print(out.min().item(), out.max().item())

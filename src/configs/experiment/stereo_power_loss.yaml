@@ -1,5 +1,5 @@
 # @package _global_
-# Baseline stéréo + loi de puissance c = 0,3 dans la LOSS seulement (Braun & Tashev 2020) : L1(|masque * X|^c, |S|^c).
+# Stereo baseline + power law c = 0.3 in the LOSS only (Braun & Tashev 2020): L1(|mask * X|^c, |S|^c).
 data:
   channels: 2
 model:

@@ -1,9 +1,9 @@
 # @package _global_
-# Longueur de contexte : baseline stéréo (lr 1e-3 constant, loss L1 d'amplitude), seule la LONGUEUR DES EXTRAITS d'entraînement change :
-# crop_length = 523776 échantillons (11,88 s) au lieu de 261632 (5,93 s). Profondeur 6 inchangée : 523776/512 + 1 trames, multiple de 64
-# (assert_no_temporal_padding). Voir experiments/07_context_length.md.
-# CONTRÔLE : batch 4 au lieu de 8 et 252 extraits par époque (63 pas, comme la baseline) : même nombre de pas ET même quantité d'audio
-# par pas que la baseline (4 x 11,88 s ≈ 8 x 5,93 s) ; seule la longueur des extraits change, pas la quantité de données vues.
+# Context length: stereo baseline (constant lr 1e-3, amplitude L1 loss), only the training CROP LENGTH changes:
+# crop_length = 523776 samples (11.88 s) instead of 261632 (5.93 s). Depth 6 unchanged: 523776/512 + 1 frames, a multiple of 64
+# (assert_no_temporal_padding). See experiments/07_context_length.md.
+# CONTROL: batch 4 instead of 8 and 252 crops per epoch (63 steps, like the baseline): same number of steps AND same amount of audio
+# per step as the baseline (4 x 11.88 s ≈ 8 x 5.93 s); only the crop length changes, not the amount of data seen.
 data:
   channels: 2
   crop_length: 523776

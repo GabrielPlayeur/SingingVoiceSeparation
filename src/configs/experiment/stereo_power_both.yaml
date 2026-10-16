@@ -1,6 +1,6 @@
 # @package _global_
-# Baseline stéréo + loi de puissance c = 0,3 sur l'entrée ET dans la loss (la configuration de Wilson et al. 2018, sauf le masque,
-# qui reste appliqué à l'amplitude linéaire).
+# Stereo baseline + power law c = 0.3 on the input AND in the loss (the configuration of Wilson et al. 2018, except the mask,
+# which is still applied to the linear amplitude).
 data:
   channels: 2
 model:

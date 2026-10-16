@@ -1,49 +1,49 @@
-# File d'expériences. Chaque entrée = un run (entraînement + évaluation) par seed. Lancer un groupe à la fois :
+# Experiment queue. Each entry = one run (training + evaluation) per seed. Launch one group at a time:
 #   python deploy/run_queue.py --tag lr-v1 --group lr --parallel 3
-# `overrides` = arguments Hydra de `python -m src.train`. Déjà faits en local (pas relancés ici) : stereo, stereo_cosine.
-parallel: 3        # défaut, surchargé par --parallel
-seeds: [42]        # défaut, surchargé par `seeds:` d'une entrée
+# `overrides` = Hydra arguments of `python -m src.train`. Already done locally (not rerun here): stereo, stereo_cosine.
+parallel: 3        # default, overridden by --parallel
+seeds: [42]        # default, overridden by the `seeds:` of an entry
 
 experiments:
-  # --- 1. learning rate (README « Optimisation de la baseline ») : à comparer sur la validation, puis écrire le gagnant
-  #        à la main dans src/configs/model/unet.yaml, commiter, poser un nouveau tag avant le groupe suivant.
+  # --- 1. learning rate (README "Baseline optimisation"): to be compared on the validation set, then write the winner
+  #        by hand in src/configs/model/unet.yaml, commit, set a new tag before the next group.
   - {name: lr3e4,        group: lr, overrides: ["experiment=stereo_lr3e4"]}
   - {name: lr3e4_cosine, group: lr, overrides: ["experiment=stereo_lr3e4_cosine"]}
-  - {name: lr1e4,        group: lr, overrides: ["experiment=stereo_lr1e4"]}   # optionnel dans le README
+  - {name: lr1e4,        group: lr, overrides: ["experiment=stereo_lr1e4"]}   # optional in the README
 
-  # --- 2. loss sur la forme d'onde (avec le lr retenu : 1e-3 constant, inchangé, cf. README section 2)
-  #        `baseline` est relancée sur le serveur pour comparer sur la même machine (lancer ce groupe avec --parallel 4).
+  # --- 2. waveform loss (with the retained lr: constant 1e-3, unchanged, see README section 2)
+  #        `baseline` is rerun on the server to compare on the same machine (launch this group with --parallel 4).
   - {name: baseline,     group: loss, overrides: ["experiment=stereo"]}
   - {name: sisdr,        group: loss, overrides: ["experiment=stereo_sisdr"]}
   - {name: wsdr,         group: loss, overrides: ["experiment=stereo_wsdr"]}
   - {name: mrstft,       group: loss, overrides: ["experiment=stereo_mrstft"]}
 
-  # --- 3. compression de l'amplitude en entrée / dans la loss
+  # --- 3. amplitude compression at the input / in the loss
   - {name: power_loss,   group: power, overrides: ["experiment=stereo_power_loss"]}
   - {name: power_in,     group: power, overrides: ["experiment=stereo_power_in"]}
   - {name: power_both,   group: power, overrides: ["experiment=stereo_power_both"]}
   - {name: norm,         group: power, overrides: ["experiment=stereo_norm"]}
 
-  # --- 4. courbe taille/qualité (README section 5) : seule la largeur du U-Net change (base_channels), baseline stéréo lr 1e-3.
-  #        w16 = la baseline, relancée ici pour avoir un point de la courbe obtenu sur la même machine que les autres.
-  #        w64 (~157 M de paramètres, 6,02 Gio de pic mesurés) dépasse le budget de 4 Go de VRAM : il n'est entraîné que sur le serveur.
+  # --- 4. size/quality curve (README section 5): only the U-Net width changes (base_channels), stereo baseline lr 1e-3.
+  #        w16 = the baseline, rerun here to have a curve point obtained on the same machine as the others.
+  #        w64 (~157 M parameters, 6.02 GiB peak measured) exceeds the 4 GB VRAM budget: it is only trained on the server.
   - {name: w4,           group: size, overrides: ["experiment=stereo_w4"]}
   - {name: w8,           group: size, overrides: ["experiment=stereo_w8"]}
   - {name: w16,          group: size, overrides: ["experiment=stereo"]}
   - {name: w32,          group: size, overrides: ["experiment=stereo_w32"]}
   - {name: w64,          group: size, overrides: ["experiment=stereo_w64"]}
 
-  # --- 0. variabilité entre graines (README « Next steps ») : baseline mono et stéréo, 3 graines chacune, sur la même machine.
-  #        Seule la graine d'entraînement change (`seed=`) ; le split reste fixé par data.random_seed=42.
-  #        C'est ce qui permet de dire si +0,04 dB (stéréo − mono) et les écarts de 0,1-0,3 dB des autres expériences sont du bruit.
+  # --- 0. seed-to-seed variability (README "Next steps"): mono and stereo baselines, 3 seeds each, on the same machine.
+  #        Only the training seed changes (`seed=`); the split stays fixed by data.random_seed=42.
+  #        This is what tells whether +0.04 dB (stereo − mono) and the 0.1-0.3 dB gaps of the other experiments are noise.
   - {name: stereo,       group: seeds, seeds: [42, 43, 44], overrides: ["experiment=stereo"]}
   - {name: mono,         group: seeds, seeds: [42, 43, 44], overrides: ["data.channels=1"]}
 
-  # --- 5. longueur de contexte (experiments/07_context_length.md) : seule la longueur des extraits d'entraînement change.
-  #        Le point 5,93 s est la baseline déjà faite (runs/loss-v1/baseline_s42), non relancée. Évaluation par défaut : fenêtres de 5,93 s
-  #        pour tous (même protocole d'inférence) ; l'évaluation à la longueur propre de chaque modèle se fait ensuite avec deploy/eval_crops.py.
-  #        ctx12_b4 = contrôle (batch 4, 252 extraits/époque) : même quantité d'audio par pas que la baseline.
-  #        Pas de 18 s ni 24 s : 4 morceaux d'entraînement durent moins de 20 s (12,9 s au plus court) et MUSDBTrainDataset exige morceau > extrait.
+  # --- 5. context length (experiments/07_context_length.md): only the training crop length changes.
+  #        The 5.93 s point is the baseline already done (runs/loss-v1/baseline_s42), not rerun. Default evaluation: 5.93 s windows
+  #        for all (same inference protocol); the evaluation at each model's own length is done afterwards with deploy/eval_crops.py.
+  #        ctx12_b4 = control (batch 4, 252 crops/epoch): same amount of audio per step as the baseline.
+  #        No 18 s nor 24 s: 4 training tracks last less than 20 s (12.9 s at the shortest) and MUSDBTrainDataset requires track > crop.
   - {name: ctx3,         group: context, overrides: ["experiment=stereo_ctx3"]}
   - {name: ctx9,         group: context, overrides: ["experiment=stereo_ctx9"]}
   - {name: ctx12,        group: context, overrides: ["experiment=stereo_ctx12"]}

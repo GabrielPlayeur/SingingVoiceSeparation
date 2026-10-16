@@ -6,7 +6,7 @@ from .utils.utils import si_sdr
 from .utils.input_transform import INPUT_TRANSFORMS, compress, transform_amplitude
 from .utils.losses import LOSS_TYPES, sisdr_loss, wsdr_loss, multires_stft_loss
 
-SCHEDULERS = ("none", "cosine")
+SCHEDULERS = ("none", "cosine", "wsd")
 
 
 class VoiceSeparationModule(L.LightningModule):
@@ -18,27 +18,31 @@ class VoiceSeparationModule(L.LightningModule):
                  learning_rate: float,
                  sr: int,
                  in_channels: int = 1,
-                 input_transform: str = "none",  # voir utils/input_transform.py ; absent des anciens checkpoints = "none"
-                 input_power: float = 0.3,       # exposant de input_transform="power"
-                 loss_power: float = 1.0,        # exposant de compression dans la loss ; 1.0 = L1 sur l'amplitude linéaire (baseline)
-                 loss_type: str = "amp_l1",      # voir utils/losses.py ; absent des anciens checkpoints = "amp_l1" (baseline)
-                 scheduler: str = "none",        # "none" : lr constant (baseline) | "cosine" : décroissance en cosinus jusqu'à 0 ; absent des anciens checkpoints = "none"
+                 input_transform: str = "none",  # see utils/input_transform.py; absent from old checkpoints = "none"
+                 input_power: float = 0.3,       # exponent of input_transform="power"
+                 loss_power: float = 1.0,        # compression exponent in the loss; 1.0 = L1 on the linear amplitude (baseline)
+                 loss_type: str = "amp_l1",      # see utils/losses.py; absent from old checkpoints = "amp_l1" (baseline)
+                 legacy_head: bool = False,      # True: BN + ReLU in the last decoder block (bug fixed in commit 68ba08f), see models/unet.py; absent from old checkpoints = False
+                 scheduler: str = "none",        # "none": constant lr (baseline) | "cosine": cosine decay to 0 | "wsd": constant lr then linear decay to 0 at the end; absent from old checkpoints = "none"
+                 decay_fraction: float = 0.2,    # scheduler="wsd": final share of the budget (in steps) over which the lr decays linearly to 0
                 ):
         super().__init__()
         if input_transform not in INPUT_TRANSFORMS:
-            raise ValueError(f"input_transform={input_transform!r} inconnu, choisir parmi {INPUT_TRANSFORMS}")
+            raise ValueError(f"unknown input_transform={input_transform!r}, choose among {INPUT_TRANSFORMS}")
         if scheduler not in SCHEDULERS:
-            raise ValueError(f"scheduler={scheduler!r} inconnu, choisir parmi {SCHEDULERS}")
+            raise ValueError(f"unknown scheduler={scheduler!r}, choose among {SCHEDULERS}")
+        if not 0 < decay_fraction <= 1:
+            raise ValueError(f"decay_fraction={decay_fraction} must be in ]0, 1]")
         if loss_type not in LOSS_TYPES:
-            raise ValueError(f"loss_type={loss_type!r} inconnu, choisir parmi {LOSS_TYPES}")
+            raise ValueError(f"unknown loss_type={loss_type!r}, choose among {LOSS_TYPES}")
         if loss_type != "amp_l1" and loss_power != 1.0:
-            raise ValueError(f"loss_power={loss_power} n'a d'effet que pour loss_type='amp_l1' (loss_type={loss_type!r})")
+            raise ValueError(f"loss_power={loss_power} only has an effect for loss_type='amp_l1' (loss_type={loss_type!r})")
         self.save_hyperparameters()
-        self.model = UNet(base_channels=base_channels, depth=depth, in_channels=in_channels)
+        self.model = UNet(base_channels=base_channels, depth=depth, in_channels=in_channels, legacy_head=legacy_head)
         self.register_buffer("window", torch.hann_window(n_fft))
 
     def _stft(self, waveform):
-        # (B, C, T) -> (B, C, F, T') ; torch.stft n'accepte que 1D/2D donc on aplatit les canaux
+        # (B, C, T) -> (B, C, F, T'); torch.stft only accepts 1D/2D so the channels are flattened
         B, C, T = waveform.shape
         spec = torch.stft(
             waveform.reshape(B * C, T),
@@ -51,7 +55,7 @@ class VoiceSeparationModule(L.LightningModule):
         return spec.reshape(B, C, *spec.shape[-2:])
 
     def _to_wave(self, amp, phase, length):
-        # amplitude est + phase mix -> forme d'onde (B, C, length)
+        # estimated amplitude + mixture phase -> waveform (B, C, length)
         spec = amp * torch.exp(1j * phase)
         B, C = spec.shape[:2]
         wave = torch.istft(
@@ -67,7 +71,7 @@ class VoiceSeparationModule(L.LightningModule):
         mix_stft = self._stft(batch["mixture"])
         batch["mix_amp"] = mix_stft.abs()
         batch["mix_phase"] = mix_stft.angle()
-        if "vocals" in batch:  # absent en inference
+        if "vocals" in batch:  # absent at inference
             batch["voc_amp"] = self._stft(batch["vocals"]).abs()
         return batch
 
@@ -75,10 +79,10 @@ class VoiceSeparationModule(L.LightningModule):
         return self.model(transform_amplitude(mix_amp, self.hparams.input_transform, self.hparams.input_power))
 
     def _loss(self, batch, voc_est_amp, voc_est_wave=None):
-        """Loss d'entraînement et de validation. `amp_l1` : L1 entre amplitudes compressées (Braun & Tashev 2020, Wilson et al.
-        2018 ; loss_power = 1 : L1 linéaire de la baseline). Les autres sont calculées sur la forme d'onde reconstruite (voir
-        utils/losses.py). Attention : val/loss n'est comparable qu'entre modèles de même loss_type et loss_power (le critère
-        d'arrêt est val/si_sdr_median, commun à tous)."""
+        """Training and validation loss. `amp_l1`: L1 between compressed amplitudes (Braun & Tashev 2020, Wilson et al.
+        2018; loss_power = 1: the baseline's linear L1). The others are computed on the reconstructed waveform (see
+        utils/losses.py). Warning: val/loss is only comparable between models with the same loss_type and loss_power (the
+        monitored metric is val/si_sdr_median, common to all)."""
         kind = self.hparams.loss_type
         if kind == "amp_l1":
             c = self.hparams.loss_power
@@ -108,14 +112,14 @@ class VoiceSeparationModule(L.LightningModule):
         loss = self._loss(batch, voc_est_amp, voc_est_wave)
 
 
-        # SI-SDR par échantillon (B,), moyenné sur les canaux : la moyenne pondérée par batch_size donne la moyenne exacte sur les crops
+        # SI-SDR per sample (B,), averaged over the channels: the mean weighted by batch_size gives the exact mean over the crops
         n = batch["vocals"].shape[0]
         sisdr = si_sdr(voc_est_wave, batch["vocals"])
         sisdr_mix = si_sdr(batch["mixture"], batch["vocals"])
 
         self._val_sisdr.append(sisdr.detach())
         self._val_sisdr_mix.append(sisdr_mix.detach())
-        self.log("val/loss", loss, on_epoch=True, batch_size=n)  # seule métrique batchée
+        self.log("val/loss", loss, on_epoch=True, batch_size=n)  # the only batched metric
 
     def on_validation_epoch_end(self):
         s = torch.cat(self._val_sisdr)
@@ -135,10 +139,20 @@ class VoiceSeparationModule(L.LightningModule):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
         if self.hparams.scheduler == "none":
             return optimizer
-        # Cosinus de Loshchilov & Hutter 2017 (SGDR, eq. 5) SANS redémarrage : η_t = η_max/2 · (1 + cos(π t / T)), η_min = 0, mis à
-        # jour à chaque pas (comme dans le papier), T = nombre total de pas de l'entraînement (max_epochs x pas par époque).
+        # Cosine of Loshchilov & Hutter 2017 (SGDR, eq. 5) WITHOUT restart: η_t = η_max/2 · (1 + cos(π t / T)), η_min = 0, updated
+        # at every step (as in the paper), T = total number of training steps (max_epochs x steps per epoch).
         total_steps = self.trainer.estimated_stepping_batches
         if not 0 < total_steps < float("inf"):
-            raise ValueError("scheduler='cosine' demande un max_epochs fini : le cosinus s'étale sur tout l'entraînement")
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=int(total_steps), eta_min=0.0)
+            raise ValueError(f"scheduler={self.hparams.scheduler!r} needs a finite max_epochs: the schedule spans the whole training")
+        total_steps = int(total_steps)
+        if self.hparams.scheduler == "cosine":
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=0.0)
+        else:
+            # WSD without a warmup phase (constant lr from step 0, like the baseline): constant lr, then linear cooldown to 0
+            # over the last `decay_fraction` of the steps (Hägele et al. 2024, arXiv:2405.18392: constant lr + cooldown;
+            # the name "WSD": Hu et al. 2024, MiniCPM, arXiv:2404.06395). The factor is 1 until step T(1-f), then (T-t)/(T f).
+            # ⚠ the value 0.2 of decay_fraction comes from the re-run plan, not checked in the text of the paper.
+            decay_steps = max(1, round(total_steps * self.hparams.decay_fraction))
+            scheduler = torch.optim.lr_scheduler.LambdaLR(
+                optimizer, lambda t: min(1.0, (total_steps - t) / decay_steps))
         return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step"}}

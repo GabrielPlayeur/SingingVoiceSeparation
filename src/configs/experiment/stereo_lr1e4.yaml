@@ -1,5 +1,5 @@
 # @package _global_
-# Optimisation de la baseline : stéréo, loss L1 d'amplitude, seul le learning rate / scheduler change (lr 1e-4 constant).
+# Baseline optimisation: stereo, amplitude L1 loss, only the learning rate / scheduler changes (lr 1e-4 constant).
 data:
   channels: 2
 model:

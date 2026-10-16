@@ -1,10 +1,10 @@
-"""Pourquoi la stéréo peut aider : la voix est (presque) au centre, l'accompagnement est large.
+"""Why stereo can help: the vocals are (almost) in the centre, the accompaniment is wide.
 
-Décomposition Mid/Side : M = (L + R) / 2 (c'est exactement le mono du pipeline), S = (L - R) / 2.
-Une source panoramiquée au centre a S ≈ 0 ; une source large ou latérale a S non négligeable.
+Mid/Side decomposition: M = (L + R) / 2 (this is exactly the pipeline's mono), S = (L - R) / 2.
+A source panned to the centre has S ≈ 0; a wide or lateral source has a non-negligible S.
 
-Usage : python -m analysis.stereo_analysis [--example "Actions - One Minute Smile"] [--window-seconds 20]
-Sorties : figures/stereo_spectrograms.png, figures/stereo_statistics.png + résumé texte.
+Usage: python -m analysis.stereo_analysis [--example "Actions - One Minute Smile"] [--window-seconds 20]
+Outputs: figures/stereo_spectrograms.png, figures/stereo_statistics.png + text summary.
 """
 import argparse
 
@@ -47,9 +47,9 @@ def main():
     setup_style()
 
     dirs = track_dirs()
-    train_dirs = dirs["train"] + dirs["val"]  # on n'analyse pas le test : pas de décision à en tirer
+    train_dirs = dirs["train"] + dirs["val"]  # the test set is not analysed: no decision to draw from it
 
-    # ---------- 1) spectrogrammes d'un morceau : L, R, Mid, Side pour voix et accompagnement
+    # ---------- 1) spectrograms of one track: L, R, Mid, Side for vocals and accompaniment
     ex = next(d for d in train_dirs if name_of(d) == args.example)
     seg = 8.0
     fig, axes = plt.subplots(2, 4, figsize=(16, 6.4), sharex=True, sharey=True, constrained_layout=True)
@@ -59,32 +59,32 @@ def main():
         M, S = ms(x)
         sigs = (("L", L), ("R", R), ("Mid (= mono)", M), ("Side (L − R)/2", S))
         mags = [np.abs(librosa.stft(sig, n_fft=N_FFT, hop_length=HOP)) for _, sig in sigs]
-        ref = max(m.max() for m in mags)  # même référence pour les 4 panneaux d'une ligne : niveaux comparables
+        ref = max(m.max() for m in mags)  # same reference for the 4 panels of a row: comparable levels
         for c, ((lab, _), mag) in enumerate(zip(sigs, mags)):
             ax = axes[r, c]
             im = ax.imshow(20 * np.log10(np.maximum(mag, 1e-10) / ref), origin="lower", aspect="auto", cmap="magma",
                            vmin=-70, vmax=0, extent=[0, seg, 0, SR / 2 / 1000])
             ax.grid(False)
-            ax.set_title(f"{'Voix' if r == 0 else 'Accompagnement'} : {lab}" , fontsize=10)
+            ax.set_title(f"{'Vocals' if r == 0 else 'Accompaniment'}: {lab}" , fontsize=10)
             if c == 0:
-                ax.set_ylabel("fréquence (kHz)")
+                ax.set_ylabel("frequency (kHz)")
             if r == 1:
                 ax.set_xlabel("temps (s)")
     ax.set_ylim(0, 8)
-    fig.colorbar(im, ax=axes, label="amplitude STFT (dB, réf. = max de la ligne)", shrink=0.8)
-    fig.suptitle(f"{args.example} : la voix tient surtout dans Mid, l'accompagnement a une énergie Side importante", fontweight="bold")
+    fig.colorbar(im, ax=axes, label="STFT amplitude (dB, ref. = max of the row)", shrink=0.8)
+    fig.suptitle(f"{args.example}: the vocals are mostly in Mid, the accompaniment has significant Side energy", fontweight="bold")
     save(fig, "stereo_spectrograms.png")
 
-    # ---------- 2) statistiques sur tous les morceaux d'entraînement + validation
+    # ---------- 2) statistics over all training + validation tracks
     band_edges = np.array([0, 100, 200, 400, 800, 1600, 3200, 6400, 12800, 22050])
     freqs = np.fft.rfftfreq(N_FFT, 1 / SR)
-    sm_ratio = {"vocals": [], "accompaniment": []}  # S/M par bande (dB)
+    sm_ratio = {"vocals": [], "accompaniment": []}  # S/M per band (dB)
     corr = {"vocals": [], "accompaniment": []}
     side_frac = {"vocals": [], "accompaniment": []}
     kept = 0
     for d in train_dirs:
         x = {s: read_window(d, s, args.window_seconds) for s in sm_ratio}
-        if np.abs(x["vocals"]).mean() < 1e-3:  # même seuil que silence_threshold des configs
+        if np.abs(x["vocals"]).mean() < 1e-3:  # same threshold as silence_threshold in the configs
             continue
         kept += 1
         for s, sig in x.items():
@@ -97,39 +97,39 @@ def main():
             sm_ratio[s].append(ratios)
             corr[s].append(np.corrcoef(sig[0], sig[1])[0, 1])
             side_frac[s].append((S ** 2).sum() / ((M ** 2).sum() + (S ** 2).sum()))
-    print(f"{kept}/{len(train_dirs)} morceaux analysés (fenêtre centrale de {args.window_seconds:.0f} s, voix non silencieuse)")
+    print(f"{kept}/{len(train_dirs)} tracks analysed (central window of {args.window_seconds:.0f} s, non-silent vocals)")
     for s in sm_ratio:
         c, f, r = np.array(corr[s]), np.array(side_frac[s]), np.array(sm_ratio[s])
-        print(f"{s:14s} corrélation L/R : médiane {np.median(c):.3f} (10e–90e perc. {np.percentile(c, 10):.3f}–{np.percentile(c, 90):.3f}) ; "
-              f"énergie dans Side : médiane {np.median(f):.1%} ; S/M global médian {np.median(db(f / (1 - f))):.1f} dB")
-        print("   S/M médian par bande (dB) :", {f"{lo}-{hi}": round(float(np.median(r[:, i])), 1) for i, (lo, hi) in enumerate(zip(band_edges[:-1], band_edges[1:]))})
+        print(f"{s:14s} L/R correlation: median {np.median(c):.3f} (10th–90th perc. {np.percentile(c, 10):.3f}–{np.percentile(c, 90):.3f}); "
+              f"Side energy: median {np.median(f):.1%}; overall median S/M {np.median(db(f / (1 - f))):.1f} dB")
+        print("   median S/M per band (dB):", {f"{lo}-{hi}": round(float(np.median(r[:, i])), 1) for i, (lo, hi) in enumerate(zip(band_edges[:-1], band_edges[1:]))})
     cv, ca = np.array(corr["vocals"]), np.array(corr["accompaniment"])
-    print(f"Corrélation voix > accompagnement sur {(cv > ca).mean():.0%} des morceaux")
-    print(f"Voix quasi mono (corrélation > 0.95) : {(cv > 0.95).mean():.0%} des morceaux ; accompagnement : {(ca > 0.95).mean():.0%}")
+    print(f"Correlation vocals > accompaniment on {(cv > ca).mean():.0%} of the tracks")
+    print(f"Nearly mono vocals (correlation > 0.95): {(cv > 0.95).mean():.0%} of the tracks; accompaniment: {(ca > 0.95).mean():.0%}")
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.4), constrained_layout=True)
     ax = axes[0]
     centers = np.arange(len(band_edges) - 1)
-    for s, color, lab in (("vocals", BLUE, "voix"), ("accompaniment", ORANGE, "accompagnement")):
+    for s, color, lab in (("vocals", BLUE, "vocals"), ("accompaniment", ORANGE, "accompaniment")):
         r = np.array(sm_ratio[s])
         lo, med, hi = np.percentile(r, [25, 50, 75], axis=0)
         ax.fill_between(centers, lo, hi, color=color, alpha=0.18, linewidth=0)
         ax.plot(centers, med, color=color, linewidth=2.2, marker="o", markersize=5, label=lab)
     ax.set_xticks(centers, [f"{int(lo)}–{int(hi)}" for lo, hi in zip(band_edges[:-1], band_edges[1:])], rotation=30)
-    ax.set_xlabel("bande de fréquence (Hz)")
-    ax.set_ylabel("énergie Side / énergie Mid (dB)")
-    ax.set_title("Largeur stéréo par bande (médiane, bande 25–75 %)")
+    ax.set_xlabel("frequency band (Hz)")
+    ax.set_ylabel("Side energy / Mid energy (dB)")
+    ax.set_title("Stereo width per band (median, 25–75 % band)")
     ax.legend()
 
     ax = axes[1]
     bins = np.linspace(-0.2, 1.0, 25)
-    ax.hist(cv, bins=bins, color=BLUE, alpha=0.75, label="voix", edgecolor="white")
-    ax.hist(ca, bins=bins, color=ORANGE, alpha=0.75, label="accompagnement", edgecolor="white")
-    ax.set_xlabel("corrélation entre les canaux L et R")
-    ax.set_ylabel("morceaux")
-    ax.set_title("Une corrélation de 1 = source strictement mono")
+    ax.hist(cv, bins=bins, color=BLUE, alpha=0.75, label="vocals", edgecolor="white")
+    ax.hist(ca, bins=bins, color=ORANGE, alpha=0.75, label="accompaniment", edgecolor="white")
+    ax.set_xlabel("correlation between the L and R channels")
+    ax.set_ylabel("tracks")
+    ax.set_title("A correlation of 1 = strictly mono source")
     ax.legend(loc="upper left")
-    fig.suptitle(f"Indices spatiaux dans MUSDB18 ({kept} morceaux d'entraînement + validation)", fontweight="bold")
+    fig.suptitle(f"Spatial cues in MUSDB18 ({kept} training + validation tracks)", fontweight="bold")
     save(fig, "stereo_statistics.png")
 
 

@@ -1,17 +1,17 @@
-"""Amplitudes d'entrée du U-Net et sensibilité au volume (ROADMAP 2a, limite B10 du walkthrough).
+"""U-Net input amplitudes and volume sensitivity (ROADMAP 2a, walkthrough limit B10).
 
-Hypothèse testée : monter ou baisser le volume d'un morceau ne devrait pas changer le masque, donc la qualité de la séparation.
-Or le réseau reçoit |X| brut (aucune normalisation, médiane 0,053, maximum de l'ordre de 200) et sa BatchNorm utilise en
-inférence des statistiques glissantes figées : le masque dépend du niveau absolu.
+Hypothesis tested: raising or lowering the volume of a track should not change the mask, hence the separation quality.
+Yet the network receives the raw |X| (no normalisation, median 0.053, maximum of the order of 200) and its BatchNorm uses
+frozen running statistics at inference: the mask depends on the absolute level.
 
-Deux figures :
-  figures/input_amplitude_levels.png  : ce que reçoit le réseau (dynamique des bins, niveaux par morceau, niveau par fréquence)
-  figures/input_gain_sensitivity.png  : (a) décalage de l'entrée du réseau sous un gain, pour chaque transformation d'entrée ;
-                                        (b, c) pour chaque checkpoint : SI-SDR de validation et variation du masque selon le gain
+Two figures:
+  figures/input_amplitude_levels.png  : what the network receives (bin dynamics, per-track levels, per-frequency level)
+  figures/input_gain_sensitivity.png  : (a) shift of the network input under a gain, for each input transform;
+                                        (b, c) for each checkpoint: validation SI-SDR and mask variation versus gain
 
-Usage :
+Usage:
     python -m analysis.input_amplitude [--ckpt mono=CKPT --ckpt stereo=CKPT ...] [--crops-per-track 5]
-Sans --ckpt, la baseline stéréo (run fgvzjxua) est utilisée. Pour ajouter un modèle entraîné avec une compression d'entrée :
+Without --ckpt, the stereo baseline (run fgvzjxua) is used. To add a model trained with an input compression:
 --ckpt stereo_power_in=outputs/VoiceSeparation/<run>/checkpoints/<ckpt>.
 """
 import argparse
@@ -32,12 +32,12 @@ from src.utils.utils import si_sdr
 from src.utils.input_transform import INPUT_TRANSFORMS, transform_amplitude
 
 GAINS_DB = [-18, -12, -6, -3, 0, 3, 6, 12, 18]
-DEFAULT_CKPTS = {"stereo": "fgvzjxua"}  # baseline stéréo (on ne travaille plus qu'en stéréo)
-LEVEL_BINS = np.linspace(-120, 60, 181)  # dB, pour l'histogramme des amplitudes
+DEFAULT_CKPTS = {"stereo": "fgvzjxua"}  # stereo baseline (we only work in stereo now)
+LEVEL_BINS = np.linspace(-120, 60, 181)  # dB, for the amplitude histogram
 
 
 def stft_amp(x, n_fft=2048, hop=512):
-    """x (B, C, T) -> |STFT| (B, C, F, T'), mêmes réglages que le module (fenêtre de Hann, center=True)."""
+    """x (B, C, T) -> |STFT| (B, C, F, T'), same settings as the module (Hann window, center=True)."""
     B, C, T = x.shape
     spec = torch.stft(x.reshape(B * C, T), n_fft=n_fft, hop_length=hop, window=torch.hann_window(n_fft),
                       return_complex=True, center=True)
@@ -45,7 +45,7 @@ def stft_amp(x, n_fft=2048, hop=512):
 
 
 def load_val_crops(crops_per_track):
-    """Extraits de validation (mêmes morceaux et même filtre anti-silence que l'entraînement), en stéréo : (N, 2, T) x 2."""
+    """Validation crops (same tracks and same anti-silence filter as training), in stereo: (N, 2, T) x 2."""
     cfg = OmegaConf.to_container(OmegaConf.load(os.path.join(ROOT, "src/configs/data/musdb.yaml")), resolve=True)
     cfg.update(channels=2, val_crops_per_track=crops_per_track)
     cfg["dataset_path"] = os.path.join(ROOT, cfg["dataset_path"])
@@ -59,7 +59,7 @@ def load_val_crops(crops_per_track):
 
 
 def track_levels(seconds=6.0):
-    """Niveau moyen de |X| (dB) d'un extrait central de chaque morceau d'entraînement + validation : variabilité entre morceaux."""
+    """Mean level of |X| (dB) of a central crop of each training + validation track: variability between tracks."""
     dirs = track_dirs()
     levels, names = [], []
     for d in dirs["train"] + dirs["val"]:
@@ -76,9 +76,9 @@ def track_levels(seconds=6.0):
 
 @torch.no_grad()
 def model_sensitivity(module, mixture, vocals, device, batch_size=8):
-    """Pour chaque gain : SI-SDR de chaque extrait et variation du masque par rapport au gain 0 dB."""
+    """For each gain: SI-SDR of each crop and mask variation relative to the 0 dB gain."""
     module = module.to(device).eval()
-    if module.hparams.in_channels == 1:  # même mono que le pipeline : moyenne L/R
+    if module.hparams.in_channels == 1:  # same mono as the pipeline: L/R mean
         mixture, vocals = mixture.mean(1, keepdim=True), vocals.mean(1, keepdim=True)
     sisdr = {g: [] for g in GAINS_DB}
     dmask = {g: [] for g in GAINS_DB}
@@ -92,7 +92,7 @@ def model_sensitivity(module, mixture, vocals, device, batch_size=8):
             if g_db == 0:
                 ref_mask = mask
             est = module._to_wave(mask * batch["mix_amp"], batch["mix_phase"], voc.shape[-1])
-            sisdr[g_db].append(si_sdr(est, voc).cpu())  # invariant à l'échelle de `est` : seul le masque compte
+            sisdr[g_db].append(si_sdr(est, voc).cpu())  # invariant to the scale of `est`: only the mask matters
             dmask[g_db].append((mask - ref_mask).abs().mean(dim=(1, 2, 3)).cpu())
             mask_mean[g_db].append(mask.mean(dim=(1, 2, 3)).cpu())
     cat = lambda d: {g: torch.cat(v).numpy() for g, v in d.items()}
@@ -100,7 +100,7 @@ def model_sensitivity(module, mixture, vocals, device, batch_size=8):
 
 
 def input_shift(amp, kind):
-    """Décalage moyen de l'entrée du réseau sous un gain, en écarts-types de l'entrée à 0 dB : c'est ce que voit la BatchNorm."""
+    """Mean shift of the network input under a gain, in standard deviations of the 0 dB input: this is what the BatchNorm sees."""
     ref = transform_amplitude(amp, kind)
     mean0, std0 = ref.mean().item(), ref.std().item()
     return {g: (transform_amplitude(amp * 10 ** (g / 20), kind).mean().item() - mean0) / std0 for g in GAINS_DB}
@@ -108,7 +108,7 @@ def input_shift(amp, kind):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ckpt", action="append", default=[], metavar="NOM=CHEMIN")
+    ap.add_argument("--ckpt", action="append", default=[], metavar="NAME=PATH")
     ap.add_argument("--crops-per-track", type=int, default=5)
     args = ap.parse_args()
     setup_style()
@@ -117,23 +117,24 @@ def main():
     ckpts = dict(c.split("=", 1) for c in args.ckpt)
     if not ckpts:
         for name, run in DEFAULT_CKPTS.items():
-            found = glob.glob(os.path.join(ROOT, f"outputs/VoiceSeparation/{run}/checkpoints/*.ckpt"))
+            found = [c for c in glob.glob(os.path.join(ROOT, f"outputs/VoiceSeparation/{run}/checkpoints/*.ckpt"))
+                     if not os.path.basename(c).startswith(("last", "periodic"))]
             if found:
                 ckpts[name] = found[0]
 
     mixture, vocals = load_val_crops(args.crops_per_track)
     amp = stft_amp(mixture)  # (N, 2, F, T)
-    print(f"{len(mixture)} extraits de validation, amplitudes |X| : forme {tuple(amp.shape)}")
+    print(f"{len(mixture)} validation crops, amplitudes |X|: shape {tuple(amp.shape)}")
 
-    # ---------- statistiques de l'entrée
+    # ---------- input statistics
     pct = {p: float(np.percentile(amp.numpy()[::4], p)) for p in (1, 10, 50, 90, 99, 99.9)}
     print("percentiles de |X| :", {p: round(v, 4) for p, v in pct.items()}, "max", round(float(amp.max()), 1))
-    print(f"dynamique médiane -> p99,9 : {20 * np.log10(pct[99.9] / pct[50]):.0f} dB ; médiane -> max : {20 * np.log10(float(amp.max()) / pct[50]):.0f} dB")
-    print(f"bins quasi vides (|X| < 1e-3, soit < -60 dB) : {(amp < 1e-3).float().mean():.1%} (au-dessus de ~16 kHz : coupure de l'encodage AAC)")
-    print(f"part des bins avec |X| < 1 : {(amp < 1).float().mean():.1%} (log1p y est quasi l'identité)")
+    print(f"median -> p99.9 dynamics: {20 * np.log10(pct[99.9] / pct[50]):.0f} dB; median -> max: {20 * np.log10(float(amp.max()) / pct[50]):.0f} dB")
+    print(f"almost empty bins (|X| < 1e-3, i.e. < -60 dB): {(amp < 1e-3).float().mean():.1%} (above ~16 kHz: AAC encoding cut-off)")
+    print(f"share of bins with |X| < 1: {(amp < 1).float().mean():.1%} (log1p is almost the identity there)")
     levels, names = track_levels()
-    print(f"niveau moyen par morceau : médiane {np.median(levels):.1f} dB, p10-p90 {np.percentile(levels, 10):.1f} à "
-          f"{np.percentile(levels, 90):.1f} dB (écart {np.percentile(levels, 90) - np.percentile(levels, 10):.1f} dB), "
+    print(f"mean level per track: median {np.median(levels):.1f} dB, p10-p90 {np.percentile(levels, 10):.1f} to "
+          f"{np.percentile(levels, 90):.1f} dB (spread {np.percentile(levels, 90) - np.percentile(levels, 10):.1f} dB), "
           f"min {levels.min():.1f}, max {levels.max():.1f} ({names[int(levels.argmin())]} / {names[int(levels.argmax())]})")
 
     hist = np.zeros(len(LEVEL_BINS) - 1)
@@ -148,39 +149,39 @@ def main():
     centers = (LEVEL_BINS[:-1] + LEVEL_BINS[1:]) / 2
     ax.fill_between(centers, hist, color=BLUE, alpha=0.35, linewidth=0)
     ax.plot(centers, hist, color=BLUE, linewidth=1.5)
-    for p, label in ((50, "médiane"), (99.9, "p99,9")):
+    for p, label in ((50, "median"), (99.9, "p99,9")):
         x = 20 * np.log10(pct[p])
         ax.axvline(x, color=INK_2, linestyle="--", linewidth=1)
         ax.text(x - 1, ax.get_ylim()[1] * 0.97, f"{label} : |X| = {pct[p]:.3g}", fontsize=8, color=INK_2, va="top", ha="right")
     ax.axvline(0, color=ORANGE, linewidth=1.5)
-    ax.text(1, ax.get_ylim()[1] * 0.55, "|X| = 1\nà gauche : log1p(|X|) ≈ |X|", fontsize=8, color=ORANGE)
+    ax.text(1, ax.get_ylim()[1] * 0.55, "|X| = 1\nleft: log1p(|X|) ≈ |X|", fontsize=8, color=ORANGE)
     ax.set_xlabel("20·log10 |X| (dB)")
-    ax.set_ylabel("part des bins")
-    ax.set_title(f"Amplitudes reçues par le réseau ({len(mixture)} extraits)")
+    ax.set_ylabel("share of bins")
+    ax.set_title(f"Amplitudes received by the network ({len(mixture)} crops)")
 
     ax = axes[1]
     order = np.argsort(levels)
     ax.scatter(np.arange(len(levels)), levels[order], color=BLUE, s=22, edgecolor="white", linewidth=0.6, zorder=3)
     lo, hi = np.percentile(levels, [10, 90])
     ax.axhspan(lo, hi, color=ORANGE, alpha=0.18)
-    ax.text(1, hi + 0.4, f"p10–p90 : {hi - lo:.1f} dB d'écart entre morceaux", fontsize=8.5, color=INK_2)
-    ax.set_xlabel("morceaux (triés)")
+    ax.text(1, hi + 0.4, f"p10–p90: {hi - lo:.1f} dB spread between tracks", fontsize=8.5, color=INK_2)
+    ax.set_xlabel("tracks (sorted)")
     ax.set_ylabel("niveau moyen de |X| (dB)")
-    ax.set_title(f"Volume par morceau ({len(levels)} extraits centraux de 6 s)")
+    ax.set_title(f"Volume per track ({len(levels)} central 6 s crops)")
 
     ax = axes[2]
     ax.plot(freqs, freq_level, color=BLUE, linewidth=1.8)
     ax.set_xscale("symlog", linthresh=1)
     ax.set_xlim(0, 22.05)
-    ax.set_xlabel("fréquence (kHz)")
+    ax.set_xlabel("frequency (kHz)")
     ax.set_ylabel("niveau moyen de |X| (dB)")
-    ax.set_title("Niveau par fréquence (la L1 est dominée par les graves)")
-    fig.suptitle("Ce que reçoit le U-Net : amplitudes brutes, sans normalisation", fontweight="bold")
+    ax.set_title("Level per frequency (the L1 is dominated by the low frequencies)")
+    fig.suptitle("What the U-Net receives: raw amplitudes, no normalisation", fontweight="bold")
     save(fig, "input_amplitude_levels.png")
 
-    # ---------- sensibilité au gain
+    # ---------- gain sensitivity
     shifts = {k: input_shift(amp[:20], k) for k in INPUT_TRANSFORMS}
-    print("\ndécalage moyen de l'entrée du réseau à +6 dB, en écarts-types de l'entrée à 0 dB :",
+    print("\nmean shift of the network input at +6 dB, in standard deviations of the 0 dB input:",
           {k: round(v[6], 2) for k, v in shifts.items()})
     results = {}
     for name, path in ckpts.items():
@@ -194,7 +195,7 @@ def main():
         r = results[name]
         print(f"\n{name} ({module.hparams.input_transform}, {r['ckpt']})")
         print("  gain (dB)       " + " ".join(f"{g:6d}" for g in GAINS_DB))
-        print("  SI-SDR médian   " + " ".join(f"{r['si_sdr_median'][g]:6.2f}" for g in GAINS_DB))
+        print("  median SI-SDR   " + " ".join(f"{r['si_sdr_median'][g]:6.2f}" for g in GAINS_DB))
         print("  Δ SI-SDR vs 0dB " + " ".join(f"{r['si_sdr_gain_vs_0'][g]:6.2f}" for g in GAINS_DB))
         print("  |Δ masque|      " + " ".join(f"{r['delta_mask'][g]:6.3f}" for g in GAINS_DB))
         print("  masque moyen    " + " ".join(f"{r['mask_mean'][g]:6.3f}" for g in GAINS_DB))
@@ -202,9 +203,9 @@ def main():
         json.dump({"gains_db": GAINS_DB, "input_shift": {k: {str(g): v for g, v in d.items()} for k, d in shifts.items()},
                    "models": results}, f, indent=1)
 
-    colors = {"stereo": BLUE}  # baseline ; les autres modèles prennent la palette dans l'ordre
+    colors = {"stereo": BLUE}  # baseline; the other models take the palette in order
     palette = [ORANGE, AQUA, INK_2, BLUE]
-    # panneau (a) : une couleur par transformation, distincte du bleu/orange (= modèles mono/stéréo) des panneaux (b) et (c)
+    # panel (a): one colour per transform, distinct from the blue/orange (= mono/stereo models) of panels (b) and (c)
     transform_style = {"none": (INK_2, "o"), "power": ("#e34948", "v"), "log1p": ("#eda100", "s"), "sqrt": ("#6250d6", "^"), "norm": (AQUA, "D")}
     fig, axes = plt.subplots(1, 3, figsize=(15.5, 4.6), constrained_layout=True)
     ax = axes[0]
@@ -213,22 +214,22 @@ def main():
         ax.plot(GAINS_DB, [shifts[k][g] for g in GAINS_DB], color=c, linewidth=2, marker=marker, markersize=5, label=k)
     ax.set_yscale("symlog", linthresh=0.5)
     ax.axhline(0, color=INK_2, linewidth=1)
-    ax.set_xlabel("gain appliqué au morceau (dB)")
-    ax.set_ylabel("décalage de l'entrée du réseau\n(en écarts-types de l'entrée à 0 dB)")
-    ax.set_title("(a) Ce que voit la BatchNorm (power : c = 0,3)")
+    ax.set_xlabel("gain applied to the track (dB)")
+    ax.set_ylabel("shift of the network input\n(in standard deviations of the 0 dB input)")
+    ax.set_title("(a) What the BatchNorm sees (power: c = 0.3)")
     ax.legend(title="input_transform")
 
-    for ax, key, ylabel, title in ((axes[1], "si_sdr_gain_vs_0", "SI-SDR médian − SI-SDR à 0 dB (dB)", "(b) Qualité de séparation selon le gain"),
-                                   (axes[2], "delta_mask", "écart moyen |masque(g) − masque(0 dB)|", "(c) Le masque change-t-il avec le volume ?")):
+    for ax, key, ylabel, title in ((axes[1], "si_sdr_gain_vs_0", "median SI-SDR − SI-SDR at 0 dB (dB)", "(b) Separation quality versus gain"),
+                                   (axes[2], "delta_mask", "mean |mask(g) − mask(0 dB)|", "(c) Does the mask change with the volume?")):
         for i, (name, r) in enumerate(results.items()):
             ax.plot(GAINS_DB, [r[key][g] for g in GAINS_DB], color=colors.get(name, palette[i % 4]), linewidth=2, marker="o",
                     markersize=4, label=f"{name} ({r['input_transform']})")
         ax.axhline(0, color=INK_2, linewidth=1)
-        ax.set_xlabel("gain appliqué au morceau (dB)")
+        ax.set_xlabel("gain applied to the track (dB)")
         ax.set_ylabel(ylabel)
         ax.set_title(title)
         ax.legend()
-    fig.suptitle("Sensibilité au volume : un modèle invariant resterait sur la ligne 0", fontweight="bold")
+    fig.suptitle("Volume sensitivity: an invariant model would stay on the 0 line", fontweight="bold")
     save(fig, "input_gain_sensitivity.png")
 
 

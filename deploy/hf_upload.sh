@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# (local) Relais Hugging Face : envoie les .stem.mp4 de MUSDB18 (5,7 Go) vers un dépôt dataset PRIVÉ, d'où le serveur les récupère
-# avec get_data_hf.sh (l'accélérateur réseau AutoDL couvre Hugging Face ; Zenodo y est inaccessible, et rsync depuis le PC est trop lent).
-# MUSDB18 est réservé à un usage académique : garder le dépôt privé. Reprenable (`hf upload` reprend un dossier interrompu quand on relance la même commande).
-# Prérequis : compte Hugging Face, jeton ÉCRITURE dans HF_TOKEN (read -rs HF_TOKEN; export HF_TOKEN), HF_REPO=utilisateur/nom (env.local.sh).
-# Usage : deploy/hf_upload.sh
+# (local) Hugging Face relay: uploads the .stem.mp4 files of MUSDB18 (5.7 GB) to a PRIVATE dataset repository, from which the server fetches them
+# with get_data_hf.sh (the AutoDL network accelerator covers Hugging Face; Zenodo is unreachable from there, and rsync from the PC is too slow).
+# MUSDB18 is restricted to academic use: keep the repository private. Resumable (`hf upload` resumes an interrupted folder when the same command is rerun).
+# Prerequisites: Hugging Face account, WRITE token in HF_TOKEN (read -rs HF_TOKEN; export HF_TOKEN), HF_REPO=user/name (env.local.sh).
+# Usage: deploy/hf_upload.sh
 # shellcheck source=deploy/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 require_var HF_REPO
-[ -n "${HF_TOKEN:-}" ] || die "HF_TOKEN absent : read -rs HF_TOKEN; export HF_TOKEN (jeton avec droit d'écriture, jamais dans un fichier)"
-[ -d "$LOCAL_MUSDB/train" ] || die "dataset local introuvable : $LOCAL_MUSDB/train"
+[ -n "${HF_TOKEN:-}" ] || die "HF_TOKEN missing: read -rs HF_TOKEN; export HF_TOKEN (token with write access, never in a file)"
+[ -d "$LOCAL_MUSDB/train" ] || die "local dataset not found: $LOCAL_MUSDB/train"
 HF=(uvx --from huggingface_hub hf)
-"${HF[@]}" repos create "$HF_REPO" --type dataset --private --exist-ok >/dev/null || die "création du dépôt $HF_REPO impossible (jeton ? droits d'écriture ?)"
-log "envoi de $LOCAL_MUSDB vers hf.co/datasets/$HF_REPO (privé)"
+"${HF[@]}" repos create "$HF_REPO" --type dataset --private --exist-ok >/dev/null || die "cannot create the repository $HF_REPO (token? write access?)"
+log "uploading $LOCAL_MUSDB to hf.co/datasets/$HF_REPO (private)"
 "${HF[@]}" upload "$HF_REPO" "$LOCAL_MUSDB" --type dataset \
-    --include 'train/*.stem.mp4' --include 'test/*.stem.mp4' || die "envoi interrompu : relancer la même commande (reprise)"
-log "OK. Sur le serveur : deploy/get_data_hf.sh"
+    --include 'train/*.stem.mp4' --include 'test/*.stem.mp4' || die "upload interrupted: rerun the same command (resume)"
+log "OK. On the server: deploy/get_data_hf.sh"

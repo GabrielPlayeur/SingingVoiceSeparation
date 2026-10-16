@@ -1,13 +1,13 @@
-"""Écart entre le mélange officiel (mixture.wav, encodé séparément en AAC) et la somme voix + accompagnement.
+"""Gap between the official mixture (mixture.wav, encoded separately in AAC) and the sum vocals + accompaniment.
 
-Le pipeline entraîne et évalue sur `vocals + accompaniment` (voir MODEL_WALKTHROUGH § 1.2). Ce script mesure :
-  1. la taille de l'écart par morceau (SNR du résidu `mixture - (vocals + accompaniment)`) ;
-  2. sa répartition en fréquence ;
-  3. son effet sur un oracle : masque calculé sur le mélange reconstruit, appliqué au vrai mélange ;
-     SI-SDR de la voix estimée, comparé à l'oracle sur le mélange reconstruit.
+The pipeline trains and evaluates on `vocals + accompaniment` (see MODEL_WALKTHROUGH § 1.2). This script measures:
+  1. the size of the gap per track (SNR of the residual `mixture - (vocals + accompaniment)`);
+  2. its distribution over frequency;
+  3. its effect on an oracle: mask computed on the rebuilt mixture, applied to the true mixture;
+     SI-SDR of the estimated vocals, compared with the oracle on the rebuilt mixture.
 
-Usage : python -m analysis.mixture_gap [--crops-per-track 3] [--skip-oracle]
-Sorties : figures/mixture_gap.png, figures/mixture_gap.csv
+Usage: python -m analysis.mixture_gap [--crops-per-track 3] [--skip-oracle]
+Outputs: figures/mixture_gap.png, figures/mixture_gap.csv
 """
 import argparse
 import csv
@@ -31,7 +31,7 @@ def db(x):
 
 
 def scan_track(d):
-    """Énergies et spectres moyens (puissance par bin) du mélange et du résidu, en lisant par blocs de 10 s."""
+    """Energies and mean spectra (power per bin) of the mixture and of the residual, read in blocks of 10 s."""
     e_mix = e_voc = e_res = 0.0
     p_mix = np.zeros(N_FFT // 2 + 1)
     p_res = np.zeros(N_FFT // 2 + 1)
@@ -59,18 +59,18 @@ def scan_track(d):
 
 
 def oracle_sensitivity(d, oracle, crop_len, positions):
-    """SI-SDR (dB) de l'oracle : masque issu du mélange reconstruit, appliqué (a) au mélange reconstruit, (b) au vrai mélange."""
+    """Oracle SI-SDR (dB): mask derived from the rebuilt mixture, applied (a) to the rebuilt mixture, (b) to the true mixture."""
     n = sf.info(f"{d}/mixture.wav").frames
     out = []
     for pos in positions:
         start = int(pos * (n - crop_len))
         rd = lambda f: sf.read(f"{d}/{f}.wav", start=start, frames=crop_len, dtype="float32", always_2d=True)[0].mean(axis=1)
         voc, acc, real = rd("vocals"), rd("accompaniment"), rd("mixture")
-        if np.abs(voc).mean() < 1e-3:  # même filtre anti-silence que le dataset (silence_threshold)
+        if np.abs(voc).mean() < 1e-3:  # same anti-silence filter as the dataset (silence_threshold)
             continue
         recon = voc + acc
         v_a = oracle.evaluate(recon, voc)
-        # (b) même masque, appliqué au vrai mélange : on reconstruit le masque à la main pour le réutiliser
+        # (b) same mask, applied to the true mixture: the mask is rebuilt by hand to be reused
         v_b = oracle_apply_mask(oracle, recon, voc, real)
         t = torch.from_numpy(voc)[None]
         out.append((float(si_sdr(torch.from_numpy(v_a)[None], t)), float(si_sdr(torch.from_numpy(v_b)[None], t))))
@@ -90,7 +90,7 @@ def main():
     ap.add_argument("--crops-per-track", type=int, default=3)
     ap.add_argument("--crop-seconds", type=float, default=6.0)
     ap.add_argument("--skip-oracle", action="store_true")
-    ap.add_argument("--max-tracks", type=int, default=None, help="pour tester rapidement")
+    ap.add_argument("--max-tracks", type=int, default=None, help="to test quickly")
     args = ap.parse_args()
     setup_style()
 
@@ -112,7 +112,7 @@ def main():
             row["oracle_recon"] = float(np.mean([r[0] for r in res])) if res else np.nan
             row["oracle_real"] = float(np.mean([r[1] for r in res])) if res else np.nan
         rows.append(row)
-        print(f"[{i + 1}/{len(all_dirs)}] {row['track'][:45]:45s} SNR(mixture/résidu) = {row['snr_mix_db']:5.1f} dB", flush=True)
+        print(f"[{i + 1}/{len(all_dirs)}] {row['track'][:45]:45s} SNR(mixture/residual) = {row['snr_mix_db']:5.1f} dB", flush=True)
 
     os.makedirs(FIG_DIR, exist_ok=True)
     cols = ["track", "subset", "duration_s", "snr_mix_db", "snr_voc_db", "oracle_recon", "oracle_real"]
@@ -123,23 +123,23 @@ def main():
 
     snr = np.array([r["snr_mix_db"] for r in rows])
     snr_voc = np.array([r["snr_voc_db"] for r in rows])
-    print(f"\nSNR mélange/résidu : médiane {np.median(snr):.1f} dB, min {snr.min():.1f}, max {snr.max():.1f}, "
+    print(f"\nSNR mixture/residual: median {np.median(snr):.1f} dB, min {snr.min():.1f}, max {snr.max():.1f}, "
           f"10e percentile {np.percentile(snr, 10):.1f}")
-    print(f"SNR voix/résidu    : médiane {np.median(snr_voc):.1f} dB, min {snr_voc.min():.1f}")
+    print(f"SNR vocals/residual : median {np.median(snr_voc):.1f} dB, min {snr_voc.min():.1f}")
     for s in ("train", "val", "test"):
         v = np.array([r["snr_mix_db"] for r in rows if r["subset"] == s])
         if len(v):
-            print(f"  {s:5s} médiane {np.median(v):5.1f} dB")
+            print(f"  {s:5s} median {np.median(v):5.1f} dB")
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.2), constrained_layout=True)
     ax = axes[0]
     bins = np.linspace(snr.min() - 1, snr.max() + 1, 24)
     ax.hist(snr, bins=bins, color=BLUE, edgecolor="white")
     ax.axvline(np.median(snr), color=INK, linewidth=1.5)
-    ax.text(np.median(snr), ax.get_ylim()[1] * 0.95, f" médiane {np.median(snr):.1f} dB", va="top", color=INK_2)
-    ax.set_xlabel("SNR du résidu : 10·log10(‖mixture‖² / ‖mixture − (voix + accomp.)‖²)  [dB]")
-    ax.set_ylabel("morceaux")
-    ax.set_title(f"Écart par morceau ({len(rows)} morceaux)")
+    ax.text(np.median(snr), ax.get_ylim()[1] * 0.95, f" median {np.median(snr):.1f} dB", va="top", color=INK_2)
+    ax.set_xlabel("residual SNR: 10·log10(‖mixture‖² / ‖mixture − (vocals + accomp.)‖²)  [dB]")
+    ax.set_ylabel("tracks")
+    ax.set_title(f"Gap per track ({len(rows)} tracks)")
 
     ax = axes[1]
     sr_ratio = np.array(spec_ratio)
@@ -147,9 +147,9 @@ def main():
     lo, med, hi = np.percentile(sr_ratio, [10, 50, 90], axis=0)
     ax.fill_between(freqs, lo, hi, color=BLUE, alpha=0.2, linewidth=0)
     ax.plot(freqs, med, color=BLUE, linewidth=2)
-    ax.set_xlabel("fréquence (kHz)")
-    ax.set_ylabel("résidu / mélange (dB)")
-    ax.set_title("Répartition fréquentielle (médiane, bande 10–90 %)")
+    ax.set_xlabel("frequency (kHz)")
+    ax.set_ylabel("residual / mixture (dB)")
+    ax.set_title("Frequency distribution (median, 10–90 % band)")
 
     ax = axes[2]
     both = [(r["oracle_recon"], r["oracle_real"]) for r in rows if "oracle_recon" in r and not np.isnan(r["oracle_recon"])]
@@ -160,14 +160,14 @@ def main():
         ax.plot(lim, lim, color=INK_2, linewidth=1, linestyle="--")
         ax.set_xlim(lim)
         ax.set_ylim(lim)
-        ax.set_xlabel("oracle sur mélange reconstruit (SI-SDR, dB)")
-        ax.set_ylabel("même masque sur le vrai mélange (dB)")
-        ax.set_title(f"Effet sur l'oracle ({len(both)} morceaux de test)")
-        print(f"Oracle SI-SDR : reconstruit {np.median(a):.2f} dB, vrai mélange {np.median(b):.2f} dB, "
-              f"écart médian {np.median(a - b):.2f} dB")
+        ax.set_xlabel("oracle on rebuilt mixture (SI-SDR, dB)")
+        ax.set_ylabel("same mask on the true mixture (dB)")
+        ax.set_title(f"Effect on the oracle ({len(both)} test tracks)")
+        print(f"Oracle SI-SDR: rebuilt {np.median(a):.2f} dB, true mixture {np.median(b):.2f} dB, "
+              f"median gap {np.median(a - b):.2f} dB")
     else:
         ax.axis("off")
-    fig.suptitle("MUSDB18 compressé : le mélange officiel n'est pas la somme des stems", fontweight="bold")
+    fig.suptitle("Compressed MUSDB18: the official mixture is not the sum of the stems", fontweight="bold")
     save(fig, "mixture_gap.png")
 
 

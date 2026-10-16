@@ -10,14 +10,27 @@ import json
 from ..utils.utils import si_sdr
 
 class Oracle:
-    def __init__(self, n_fft, hop_length):
+    """Ideal mask computed from the true vocals, applied to the mixture.
+
+    `mask` :
+      - "irm"  : |V| / |X| bounded to [0, 1] (default; same family as the model's sigmoid output);
+      - "psm"  : |V| / |X| · cos(∠V − ∠X) bounded to [0, 1], phase-sensitive mask (Erdogan et al., ICASSP 2015):
+                 the best real-valued mask in the least-squares sense when the mixture phase is kept;
+      - "none" : no bound, the estimated amplitude is exactly |V| (unbounded ratio |V| / |X|).
+    `phase`: "mixture" (default, like the model) or "true" (phase of the true vocals, unavailable in practice).
+    The default ("irm", "mixture") is the oracle of `src.evaluate`; the other variants are used by `analysis.oracle_phase`.
+    """
+    def __init__(self, n_fft, hop_length, mask="irm", phase="mixture"):
+        assert mask in ("irm", "psm", "none") and phase in ("mixture", "true")
         self.n_fft = n_fft
         self.hop_length = hop_length
+        self.mask = mask
+        self.phase = phase
 
     def evaluate(self, mixture, vocals):
         if mixture.ndim == 2:
-            # canal par canal : même résultat (STFT et masque sont indépendants par canal), mais la RAM d'un morceau entier
-            # (~3 Go pour 5,6 min en stéréo) est divisée par le nombre de canaux
+            # channel by channel: same result (STFT and mask are independent per channel), but the RAM of a whole track
+            # (~3 GB for 5.6 min in stereo) is divided by the number of channels
             return np.stack([self.evaluate(m, v) for m, v in zip(mixture, vocals)])
 
         mix_stft = librosa.stft(mixture, n_fft=self.n_fft, hop_length=self.hop_length, pad_mode="reflect")
@@ -25,15 +38,21 @@ class Oracle:
         mix_phase = np.angle(mix_stft)
         del mix_stft
 
-        voc_amp = np.abs(librosa.stft(vocals, n_fft=self.n_fft, hop_length=self.hop_length, pad_mode="reflect"))
+        voc_stft = librosa.stft(vocals, n_fft=self.n_fft, hop_length=self.hop_length, pad_mode="reflect")
+        voc_amp = np.abs(voc_stft)
+        voc_phase = np.angle(voc_stft) if (self.phase == "true" or self.mask == "psm") else None
+        del voc_stft
         mask = voc_amp / (mix_amp + 1e-8)
         del voc_amp
-        mask = np.clip(mask, 0, 1) # 0 (no voice) ; 1 (only voice)
+        if self.mask == "psm":
+            mask *= np.cos(voc_phase - mix_phase)
+        if self.mask != "none":
+            mask = np.clip(mask, 0, 1) # 0 (no voice) ; 1 (only voice)
 
         voc_est_amp = mix_amp * mask
         del mix_amp, mask
-        voc_est_stft = voc_est_amp * np.exp(1j * mix_phase)
-        del voc_est_amp, mix_phase
+        voc_est_stft = voc_est_amp * np.exp(1j * (voc_phase if self.phase == "true" else mix_phase))
+        del voc_est_amp, mix_phase, voc_phase
         voc_est = librosa.istft(voc_est_stft, hop_length=self.hop_length, length=mixture.shape[-1])
 
         return voc_est
@@ -50,7 +69,7 @@ class OracleValReference(Callback):
             crop = val_crops[i]
             voc_est = self.oracle.evaluate(crop["mixture"].numpy(), crop["vocals"].numpy())
             scores.append(si_sdr(torch.from_numpy(voc_est), crop["vocals"]))
-        self.value = torch.quantile(torch.stack(scores), 0.5).item()  # même médiane que le module
+        self.value = torch.quantile(torch.stack(scores), 0.5).item()  # same median as the module
 
     def on_validation_epoch_end(self, trainer, pl_module):
         if not trainer.sanity_checking:
@@ -58,9 +77,14 @@ class OracleValReference(Callback):
 
 
 class OracleCache:
-    ORACLE_VERSION = 1
-    def __init__(self, directory, dataset_path, channels, n_fft, hop_length):
-        self.path = os.path.join(directory, f"oracle_{channels}ch_nfft{n_fft}_hop{hop_length}.json") if directory else None
+    # 2: entries also hold sir_oracle and sar_oracle (version 1 only had sdr_oracle and si_sdri_oracle)
+    ORACLE_VERSION = 2
+    FIELDS = ("sdr_oracle", "sir_oracle", "sar_oracle", "si_sdri_oracle", "n_samples")
+
+    def __init__(self, directory, dataset_path, channels, n_fft, hop_length, mixture="sum"):
+        # the oracle depends on the mixture it is applied to: one file per mixture convention (the "sum" name is unchanged)
+        tag = "" if mixture == "sum" else f"_{mixture}"
+        self.path = os.path.join(directory, f"oracle_{channels}ch_nfft{n_fft}_hop{hop_length}{tag}.json") if directory else None
         self.meta = {"version": self.ORACLE_VERSION, "dataset_path": os.path.abspath(dataset_path)}
         self.tracks = {}
         if self.path and os.path.exists(self.path):
@@ -76,7 +100,7 @@ class OracleCache:
     def put(self, track_name, result):
         if not self.path:
             return
-        self.tracks[track_name] = {k: result[k] for k in ("sdr_oracle", "si_sdri_oracle", "n_samples")}
+        self.tracks[track_name] = {k: result[k] for k in self.FIELDS}
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         tmp = self.path + ".tmp"
         with open(tmp, "w") as f:
@@ -141,7 +165,7 @@ def main():
 
 
     sdr = museval.evaluate(
-        references=voc_crop[np.newaxis, :, np.newaxis],   # (sources, samples, canaux)
+        references=voc_crop[np.newaxis, :, np.newaxis],   # (sources, samples, channels)
         estimates=voc_est[np.newaxis, :len(voc_crop), np.newaxis],
     )
     print(sdr)

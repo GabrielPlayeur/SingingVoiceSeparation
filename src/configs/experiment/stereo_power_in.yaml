@@ -1,5 +1,5 @@
 # @package _global_
-# Baseline stéréo + loi de puissance c = 0,3 sur l'ENTRÉE du réseau seulement (Wilson et al. 2018). Loss et masque inchangés.
+# Stereo baseline + power law c = 0.3 on the network INPUT only (Wilson et al. 2018). Loss and mask unchanged.
 data:
   channels: 2
 model:
