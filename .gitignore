@@ -24,3 +24,5 @@ runs/
 deploy/env.local.sh
 infos.ms
 deploy/__pycache__/
+
+CLAUDE.md
