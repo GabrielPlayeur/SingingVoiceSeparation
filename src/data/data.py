@@ -84,7 +84,7 @@ class MUSDB18DataModule(L.LightningDataModule):
         rng = np.random.default_rng(self.hparams.random_seed)
         crops = []
         for track_dir in val_dirs:
-            n_frames = sf.info(os.path.join(track_dir, "mixture.wav")).frames
+            n_frames = sf.info(os.path.join(track_dir, "vocals.wav")).frames  # same length as mixture.wav
             kept, tries = 0, 0
             while kept < self.hparams.val_crops_per_track and tries < self.hparams.max_retries:
                 tries += 1

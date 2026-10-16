@@ -66,10 +66,11 @@ class MUSDBTrainDataset(Dataset):
         self.gain_high = gain_high
         self.channel_swap = channel_swap
 
-        # the duration of each track is read once, at start-up
+        # the duration of each track is read once, at start-up, from vocals.wav: mixture.wav is not needed for training (the
+        # mixture is the sum of the stems) and can be deleted on a full disk; the three files have the same length (100/100 train tracks)
         self.track_lengths = []
         for d in track_dirs:
-            info = sf.info(os.path.join(d, "mixture.wav"))
+            info = sf.info(os.path.join(d, "vocals.wav"))
             self.track_lengths.append(info.frames)
 
         n_positions = np.array(self.track_lengths) - self.crop_length
