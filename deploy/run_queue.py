@@ -82,7 +82,10 @@ def build_jobs(cfg, groups, only):
             ckpt = e.get("ckpt", "best")
             if ckpt not in ("best", "last"):
                 sys.exit(f"ERROR: experiment {e.name}: ckpt={ckpt!r}, expected 'best' or 'last'")
-            jobs.append(Job(e.name, int(seed), [str(o) for o in e.overrides], ckpt))
+            overrides = [str(o) for o in e.overrides]
+            if any("<" in o for o in overrides):
+                sys.exit(f"ERROR: experiment {e.name}: unfilled placeholder in {overrides} (replace <B> etc. in deploy/queue.yaml)")
+            jobs.append(Job(e.name, int(seed), overrides, ckpt))
     unknown = (only or set()) - names
     if unknown:
         sys.exit(f"ERROR: --only: unknown experiments {sorted(unknown)} (available: {sorted(names)})")
