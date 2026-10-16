@@ -1,0 +1,15 @@
+{
+  "track": "The Easton Ellises - Falcon 69",
+  "slug": "falcon-69",
+  "attribution": "The Easton Ellises, \u201cFalcon 69\u201d",
+  "kind": "best",
+  "start_s": 155,
+  "seconds": 10,
+  "sdr": 7.79629161568793,
+  "sir": 16.645181501143785,
+  "sar": 0.6823527805254928,
+  "track_sdr": 3.61124831527279,
+  "ckpt": "outputs/VoiceSeparation/fgvzjxua/checkpoints/baseline-stereo.ckpt",
+  "format": "mp3",
+  "gain": 1.0
+}

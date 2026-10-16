@@ -1,0 +1,15 @@
+{
+  "track": "The Easton Ellises (Baumi) - SDRNR",
+  "slug": "sdrnr",
+  "attribution": "The Easton Ellises (Baumi), \u201cSDRNR\u201d",
+  "kind": "typical",
+  "start_s": 90,
+  "seconds": 10,
+  "sdr": 5.75027104791797,
+  "sir": 17.46906824235362,
+  "sar": 1.2933502715270437,
+  "track_sdr": 3.320829367674679,
+  "ckpt": "outputs/VoiceSeparation/fgvzjxua/checkpoints/baseline-stereo.ckpt",
+  "format": "mp3",
+  "gain": 1.0
+}
