@@ -90,18 +90,19 @@ def score_track(task):
 
 
 def evaluate(checkpoint_path, dataset_path, crop_length=261632, batch_size=16, max_tracks=None, logger=None, output_json=None,
-             with_oracle=True, workers=None, oracle_cache_dir="outputs/oracle_cache"):
+             with_oracle=True, workers=None, oracle_cache_dir="outputs/oracle_cache", module=None, accelerator="auto"):
     """Évalue un checkpoint sur le jeu de test, toujours en STÉRÉO : références et estimation sur 2 canaux (SDR museval v4
     sur 2 canaux), le protocole de la littérature. Un modèle mono (ancien checkpoint) est appliqué séparément à L puis à R.
 
     `workers` : processus de calcul des métriques (0 = dans le processus principal, None = selon la RAM disponible, voir
     `default_workers`). Chacun a besoin d'environ 2,5 Go, davantage pour un morceau de plus de 6 min."""
     workers = default_workers() if workers is None else workers
-    module = VoiceSeparationModule.load_from_checkpoint(checkpoint_path, map_location="cpu")
+    if module is None:  # `module` : modèle déjà construit (ex. U-Net quantifié, src/quantize.py) ; checkpoint_path sert alors d'étiquette
+        module = VoiceSeparationModule.load_from_checkpoint(checkpoint_path, map_location="cpu")
     sr = module.hparams.sr
     channels = module.hparams.in_channels
     assert_no_temporal_padding(crop_length, module.hparams.hop_length, module.hparams.depth)
-    trainer = Trainer( accelerator="auto",
+    trainer = Trainer( accelerator=accelerator,
                        devices=1,
                        logger=False,
                        enable_checkpointing=False,
