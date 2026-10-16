@@ -17,6 +17,8 @@ Data: MUSDB18 (compressed stems), 84 train / 16 validation / 50 test tracks. Met
 
 The baseline (9.8 M parameters, stereo) reaches **4.50 dB**. The ideal mask with the same reconstruction reaches 9.09 dB, so the model gets 49 % of what a magnitude mask can give and about 4.6 dB are left in the mask estimate itself, before the mixture phase matters.
 
+**Calibration.** I ran the pretrained [Open-Unmix](https://github.com/sigsep/open-unmix-pytorch) `umx` through the same pipeline (official mixture, same 50 tracks, stereo museval v4): **6.43 dB** [5.21, 7.24], against 6.32 dB published (Stöter et al., 2019). The pipeline reproduces the published number. My baseline gets 4.47 dB on the same mixture: **1.7 dB below** Open-Unmix (paired median difference +1.69 dB [1.25, 1.90], better on 43 of 50 tracks). With the same reconstruction as my U-Net (magnitude estimate, mixture phase, no Wiener filter) Open-Unmix gets 6.06 dB, so most of the gap is in the network, not in the filtering.
+
 | # | Question | At 150 epochs, 1 seed (test SDR, paired difference to the baseline) | At budget B, 3 seeds | Page |
 |---|---|---|---|---|
 | 1 | How far is the baseline from the oracle? | 4.50 against 9.09 dB; below the oracle on 50 of 50 tracks | | [01](experiments/01_baseline_vs_oracle.md) |
@@ -33,7 +35,7 @@ I expected the waveform losses to gain 0.3 to 1 dB and got 0.1. I expected compr
 **Caveats.**
 - All 150-epoch runs stop while the validation score is still rising, so those comparisons also measure how fast a model converges. I am re-running them at a longer budget B, with data augmentation and three seeds, decided on validation only. The B column is empty until that is done.
 - One run moves by about 0.3 dB between two trainings of the same baseline; paired differences stay within ±0.15 dB. That is the yardstick for the 150-epoch column.
-- The numbers do not compare with published ones: compressed MUSDB18 instead of HQ, SDR computed on vocals plus accompaniment instead of the official mixture.
+- The table below builds the mixture as vocals plus accompaniment (4.50 dB for the baseline; 4.47 dB with the official mixture, the protocol of the calibration above). Absolute numbers are comparable with published ones only for compressed MUSDB18, not for HQ.
 
 <!-- AUTHOR: conclusion to write once the B column is filled. -->
 
@@ -45,6 +47,7 @@ Environment with [uv](https://github.com/astral-sh/uv), configs with Hydra, logs
 uv sync
 uv run python -m src.train experiment=stereo                    # baseline
 uv run python -m src.evaluate CKPT -o outputs/eval_stereo.json  # test set, stereo museval SDR
+uv run --with openunmix --with torchaudio==2.10.0 python -m src.evaluate_umx --niter 1 -o outputs/umx_niter1.json   # calibration
 uv run python -m analysis.make_demo extract CKPT musdb18/processed/test/<track>   # demo excerpts
 ```
 

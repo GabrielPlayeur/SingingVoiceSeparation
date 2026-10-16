@@ -70,7 +70,22 @@ The **oracle** is the ideal ratio mask clipped to [0, 1], applied to the mixture
 
 With 2 to 4 tracks per genre outside Pop/Rock, none of these genre differences is significant.
 
-**Not comparable to published results**: vocals + accompaniment instead of the official mixture, compressed MUSDB18 rather than HQ, and my evaluation hasn't been checked against a published baseline. The baseline is trained without data augmentation.
+## Calibration against Open-Unmix
+
+Does my evaluation pipeline reproduce a published number? I ran the pretrained Open-Unmix `umx` (Stöter et al., 2019, JOSS) through `src.evaluate` (same 50 test tracks, official `mixture.wav`, stereo museval v4, same bootstrap) with [`src/evaluate_umx.py`](../src/evaluate_umx.py). The baseline was re-evaluated on the same official mixture.
+
+| model (official mixture, 50 test tracks) | SDR median [95% CI] | paired difference to the baseline |
+|---|---|---|
+| my baseline (stereo, 150 epochs) | 4.47 dB [3.54, 5.37] | |
+| Open-Unmix, `niter 0` (network magnitude and mixture phase, like my U-Net) | 6.06 dB [5.32, 7.30] | +1.44 dB [0.99, 1.70], better on 43/50 |
+| Open-Unmix, `niter 1` (published setup, Wiener filter on 4 targets) | **6.43 dB** [5.21, 7.24] | +1.69 dB [1.25, 1.90], better on 43/50 |
+
+- The published value for `umx` is 6.32 dB (median over the 50 tracks). ⚠ I took it from a paper that cites it (Pac-HuBERT, arXiv:2304.02160) and from Papers with Code, not from the Open-Unmix paper. 6.43 is 0.11 dB above it, well inside my CI: the pipeline reproduces the number.
+- The baseline is 1.7 dB below Open-Unmix. About 1.4 dB of it remains when Open-Unmix uses my reconstruction, so the gap is mostly in the network and its training, not in the Wiener filter.
+- The baseline gives 4.50 dB when the mixture is built as vocals plus accompaniment (the convention of the other pages) and 4.47 dB with the official mixture. All pages keep the first convention.
+- Still not comparable with HQ results: this is compressed MUSDB18.
+
+Commands: `uv run python -m src.evaluate CKPT --mixture official --no-oracle -o outputs/eval_stereo_official.json`; `uv run --with openunmix --with torchaudio==2.10.0 python -m src.evaluate_umx --niter {0,1} -o outputs/umx_niter{0,1}.json`.
 
 ## For the record: the mono analysis
 
