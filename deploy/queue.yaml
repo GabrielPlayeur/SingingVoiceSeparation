@@ -69,7 +69,7 @@ experiments:
   #        10 runs: launch with --parallel 5 (two full waves). f_w32 first: the longest runs. If the recipe is constant lr +
   #        augmentation, seed 42 of f_w32 is probe-v1/probe_w32_aug_s42: remove 42 from its seeds before tagging.
   #        f_mono: channel_swap raises an error in mono (dataset.py), and the mean of L and R is invariant to the swap anyway.
-  - {name: f_w32,        group: final, ckpt: last, seeds: [42, 43, 44], overrides: ["experiment=recipe", "model.base_channels=32"]}
+  - {name: f_w32,        group: final, ckpt: last, seeds: [43, 44],     overrides: ["experiment=recipe", "model.base_channels=32"]}   # seed 42 = probe-v1/probe_w32_aug_s42 (recipe = constant lr + augmentation)
   - {name: f_wsdr,       group: final, ckpt: last, seeds: [42, 43, 44], overrides: ["experiment=recipe", "model.loss_type=wsdr"]}
   - {name: f_sisdr,      group: final, ckpt: last, seeds: [42],         overrides: ["experiment=recipe", "model.loss_type=sisdr"]}
   - {name: f_power_loss, group: final, ckpt: last, seeds: [42],         overrides: ["experiment=recipe", "model.loss_power=0.3"]}

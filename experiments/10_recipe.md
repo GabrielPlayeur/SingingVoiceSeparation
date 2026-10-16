@@ -2,9 +2,9 @@
 
 [← back to README](../README.md)
 
-**Status.** Running on the rented GPU (tag `recipe-v1`, 10 runs, `--parallel 5`). **This page was written while phase 2 was running, after the tag**: the tag `recipe-v1` (commit `d6bafbb`, 16 Oct 2026, 18:41 +08) contains the queue entries but no prediction page. What was fixed in git before the runs: the decision rule, as code and constants of [`analysis/convergence.py`](../analysis/convergence.py) (`decide`, commit `c9ccd33`), the budget B = 1000 ([09](09_convergence_probe.md)) and the 10 run configs. No phase-2 curve had been opened when the predictions below were written.
+**Status.** Done (tag `recipe-v1`, 10 runs, `--parallel 5`). **This page was written while phase 2 was running, after the tag**: the tag `recipe-v1` (commit `d6bafbb`, 16 Oct 2026, 18:41 +08) contains the queue entries but no prediction page. What was fixed in git before the runs: the decision rule, as code and constants of [`analysis/convergence.py`](../analysis/convergence.py) (`decide`, commit `c9ccd33`), the budget B = 1000 ([09](09_convergence_probe.md)) and the 10 run configs. No phase-2 curve had been opened when the predictions below were written.
 
-**Result in one line.** Not available yet.
+**Result in one line.** Augmentation is kept (+0.253 dB on validation, threshold 0.145 dB, 3 seeds per cell); the end-of-training decay is not (+0.126 dB, below the threshold), although it halves the noise of the final epochs. Recipe: constant lr 1e-3 + augmentation. σ_seed = 0.089 dB.
 
 ## Question
 
@@ -55,4 +55,40 @@ uv run python -m analysis.convergence decide --budget 1000 \
 
 ## Results
 
-*To be filled from `figures/convergence_decide.json`; nothing above will be edited.*
+Phase 2 finished on 17 Oct 2026 (10 runs, about 197 min each with 5 in parallel). Validation only; no test number computed yet.
+
+**Score per run** (mean of `val/si_sdr_median` over epochs 991 to 1000, `figures/convergence_decide.json`):
+
+| cell | seed 42 | seed 43 | seed 44 | mean |
+|---|---|---|---|---|
+| const | 4.504 | 4.427 | 4.600 | 4.511 |
+| **const_aug** | 4.743 | 4.632 | 4.871 | **4.749** |
+| wsd | 4.661 | 4.692 | 4.512 | 4.622 |
+| wsd_aug | 4.872 | 4.878 | 4.919 | 4.890 |
+
+σ_seed = **0.089 dB** (pooled, 8 degrees of freedom); threshold 2 · σ_seed · √(2/3) = **0.145 dB**.
+
+| factor | simple effects | main effect | decision |
+|---|---|---|---|
+| augmentation | +0.238 (constant lr), +0.268 (wsd) | **+0.253 dB** | **kept** |
+| end decay (`wsd`) | +0.111 (no aug), +0.141 (aug) | **+0.126 dB** | not kept (below 0.145) |
+| interaction | | +0.030 dB (2 SD = 0.206) | information only |
+
+Noise of the end of the run (mean over the 3 seeds of the standard deviation of the last 10 epochs; standard deviation of the epoch-to-epoch differences over the last 50 epochs):
+
+| cell | std of the last 10 epochs | epoch-to-epoch std |
+|---|---|---|
+| const | 0.094 | 0.119 |
+| const_aug | 0.099 | 0.159 |
+| wsd | 0.043 | 0.068 |
+| wsd_aug | 0.036 | 0.060 |
+
+**Recipe: constant lr 1e-3 + augmentation** (`experiment=probe_w16_aug`), written into `src/configs/experiment/recipe.yaml`. The resolved config of `experiment=recipe` is identical to `probe_w16_aug` except for the checkpointing options and the W&B name, so `probe_w32_aug_s42` serves as seed 42 of `f_w32` in phase 3.
+
+### Against the predictions
+
+1. **Augmentation: confirmed.** +0.253 dB, inside the predicted +0.15 to +0.35 dB, with the same sign and size in both simple effects. The +0.24 dB of the one-seed probe was not seed noise.
+2. **End decay: inconclusive.** +0.126 dB is inside the predicted 0 to +0.2 dB, positive in both simple effects, but below the threshold, so the rule does not keep it. Its other prediction is **confirmed**: the noise of the last 10 epochs drops from 0.094–0.099 to 0.036–0.043 dB, a factor 2.2 to 2.8 (predicted: at least halved). I follow the rule and do not adopt it: a second change of rule after seeing the numbers (after B in [09](09_convergence_probe.md)) would not be backed by a failed pre-registered check, as that one was. The cost of this choice: the phase-3 and final checkpoints are taken at a constant learning rate, so one final checkpoint carries about 0.1 dB of epoch-to-epoch noise; phase-3 decisions use the 10-epoch mean, which averages most of it out.
+3. **Interaction (decay helps more without augmentation): rejected, weakly.** The simple effects go the other way (+0.111 without, +0.141 with augmentation), and the interaction (+0.030 dB) is far below its own noise (0.206 dB).
+
+**What it changes.** The seed-to-seed spread is now measured: σ_seed = 0.089 dB on the validation score. It replaces the ±0.15 dB "rerun noise" of the 150-epoch pages, which only measured GPU non-determinism with the same seed. With one seed per configuration, two runs must differ by more than about 2 · 0.089 · √2 = 0.25 dB before the difference means anything.

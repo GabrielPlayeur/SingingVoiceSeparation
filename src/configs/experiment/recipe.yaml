@@ -1,17 +1,16 @@
 # @package _global_
 # Recipe kept by phase 2 (experiments/10_recipe.md, `python -m analysis.convergence decide`), base of every run of phase 3
 # (experiments/11_final.md): w16 stereo, budget B = 1000 epochs (experiments/09), no early stopping, last checkpoint evaluated.
-# The ${FILL_AFTER_PHASE_2} values are replaced by hand after the phase-2 decision. Until then every run fails at start-up:
-# train.py resolves the whole config (WandbLogger) and the key does not exist (InterpolationKeyError). Not `???`: OmegaConf
-# merges a missing value over the defaults without replacing them, so the run would silently start with no augmentation (tested).
+# Filled on 17 Oct 2026 from `analysis.convergence decide` (figures/convergence_decide.json, experiments/10): augmentation kept
+# (main effect +0.253 dB > threshold 0.145 dB), end decay not kept (+0.126 dB < 0.145 dB). Same recipe as probe_w16_aug.
 data:
   channels: 2
-  remix: ${FILL_AFTER_PHASE_2}          # true if augmentation is kept (the three flags go together, as in probe_w16_aug)
-  gain: ${FILL_AFTER_PHASE_2}
-  channel_swap: ${FILL_AFTER_PHASE_2}
+  remix: true          # augmentation kept: the three flags go together, as in probe_w16_aug
+  gain: true
+  channel_swap: true
 model:
   base_channels: 16
-  scheduler: ${FILL_AFTER_PHASE_2}      # none (constant lr) | wsd (constant then linear decay over the last 20 %)
+  scheduler: none     # constant lr: wsd not kept
 training:
   max_epochs: 1000
   early_stopping_patience: null
