@@ -149,34 +149,34 @@ def main():
     centers = (LEVEL_BINS[:-1] + LEVEL_BINS[1:]) / 2
     ax.fill_between(centers, hist, color=BLUE, alpha=0.35, linewidth=0)
     ax.plot(centers, hist, color=BLUE, linewidth=1.5)
-    for p, label in ((50, "median"), (99.9, "p99,9")):
+    for p, label in ((50, "median"), (99.9, "p99.9")):
         x = 20 * np.log10(pct[p])
         ax.axvline(x, color=INK_2, linestyle="--", linewidth=1)
-        ax.text(x - 1, ax.get_ylim()[1] * 0.97, f"{label} : |X| = {pct[p]:.3g}", fontsize=8, color=INK_2, va="top", ha="right")
+        ax.text(x - 1, ax.get_ylim()[1] * 0.97, f"{label}: |X| = {pct[p]:.3g}", fontsize=8, color=INK_2, va="top", ha="right")
     ax.axvline(0, color=ORANGE, linewidth=1.5)
-    ax.text(1, ax.get_ylim()[1] * 0.55, "|X| = 1\nleft: log1p(|X|) ≈ |X|", fontsize=8, color=ORANGE)
+    ax.text(1, ax.get_ylim()[1] * 0.55, "|X| = 1", fontsize=8, color=ORANGE)
     ax.set_xlabel("20·log10 |X| (dB)")
     ax.set_ylabel("share of bins")
-    ax.set_title(f"Amplitudes received by the network ({len(mixture)} crops)")
+    ax.set_title(f"Input amplitudes ({len(mixture)} crops)")
 
     ax = axes[1]
     order = np.argsort(levels)
     ax.scatter(np.arange(len(levels)), levels[order], color=BLUE, s=22, edgecolor="white", linewidth=0.6, zorder=3)
     lo, hi = np.percentile(levels, [10, 90])
     ax.axhspan(lo, hi, color=ORANGE, alpha=0.18)
-    ax.text(1, hi + 0.4, f"p10–p90: {hi - lo:.1f} dB spread between tracks", fontsize=8.5, color=INK_2)
+    ax.text(1, hi + 0.4, f"p10–p90: {hi - lo:.1f} dB", fontsize=8.5, color=INK_2)
     ax.set_xlabel("tracks (sorted)")
-    ax.set_ylabel("niveau moyen de |X| (dB)")
-    ax.set_title(f"Volume per track ({len(levels)} central 6 s crops)")
+    ax.set_ylabel("mean |X| (dB)")
+    ax.set_title(f"Level per track ({len(levels)} crops)")
 
     ax = axes[2]
     ax.plot(freqs, freq_level, color=BLUE, linewidth=1.8)
     ax.set_xscale("symlog", linthresh=1)
     ax.set_xlim(0, 22.05)
     ax.set_xlabel("frequency (kHz)")
-    ax.set_ylabel("niveau moyen de |X| (dB)")
-    ax.set_title("Level per frequency (the L1 is dominated by the low frequencies)")
-    fig.suptitle("What the U-Net receives: raw amplitudes, no normalisation", fontweight="bold")
+    ax.set_ylabel("mean |X| (dB)")
+    ax.set_title("Level per frequency")
+    fig.suptitle("Network input: raw amplitudes", fontweight="bold")
     save(fig, "input_amplitude_levels.png")
 
     # ---------- gain sensitivity
@@ -215,11 +215,11 @@ def main():
     ax.set_yscale("symlog", linthresh=0.5)
     ax.axhline(0, color=INK_2, linewidth=1)
     ax.set_xlabel("gain applied to the track (dB)")
-    ax.set_ylabel("shift of the network input\n(in standard deviations of the 0 dB input)")
-    ax.set_title("(a) What the BatchNorm sees (power: c = 0.3)")
+    ax.set_ylabel("input shift (std of the 0 dB input)")
+    ax.set_title("(a) Input shift (power c = 0.3)")
     ax.legend(title="input_transform")
 
-    for ax, key, ylabel, title in ((axes[1], "si_sdr_gain_vs_0", "median SI-SDR − SI-SDR at 0 dB (dB)", "(b) Separation quality versus gain"),
+    for ax, key, ylabel, title in ((axes[1], "si_sdr_gain_vs_0", "SI-SDR − SI-SDR at 0 dB (dB)", "(b) Quality vs gain"),
                                    (axes[2], "delta_mask", "mean |mask(g) − mask(0 dB)|", "(c) Does the mask change with the volume?")):
         for i, (name, r) in enumerate(results.items()):
             ax.plot(GAINS_DB, [r[key][g] for g in GAINS_DB], color=colors.get(name, palette[i % 4]), linewidth=2, marker="o",
@@ -229,7 +229,7 @@ def main():
         ax.set_ylabel(ylabel)
         ax.set_title(title)
         ax.legend()
-    fig.suptitle("Volume sensitivity: an invariant model would stay on the 0 line", fontweight="bold")
+    fig.suptitle("Volume sensitivity (invariant = flat at 0)", fontweight="bold")
     save(fig, "input_gain_sensitivity.png")
 
 

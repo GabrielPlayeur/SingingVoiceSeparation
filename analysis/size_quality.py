@@ -113,17 +113,17 @@ def main():
     steps = np.diff(y)
     print(f"Overall slope: {slope:+.2f} dB per width doubling (x4 in parameters); gain between consecutive points: "
           + ", ".join(f"{curve[i]['label']}→{curve[i + 1]['label']} {d:+.2f}" for i, d in enumerate(steps)))
-    print("Courbe monotone" if np.all(steps > 0) else "WARNING: the curve is not monotonic (a bigger model does worse: under-training?)")
+    print("Monotonic curve" if np.all(steps > 0) else "WARNING: the curve is not monotonic (a bigger model does worse: under-training?)")
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5.2), constrained_layout=True)
-    for ax, key, title in ((axes[0], "sdr", "Median test SDR (museval)"), (axes[2], "si_sdri", "Median test SI-SDRi")):
+    for ax, key, title in ((axes[0], "sdr", "Test SDR (median)"), (axes[2], "si_sdri", "Test SI-SDRi (median)")):
         px = [r["params"] for r in curve]
         ax.errorbar(px, [r[key]["median"] for r in curve],
                     yerr=[[r[key]["median"] - r[key]["lo"] for r in curve], [r[key]["hi"] - r[key]["median"] for r in curve]],
-                    color=BLUE, marker="o", markersize=7, linewidth=2, capsize=3, label="U-Net width (base_channels)", zorder=3)
+                    color=BLUE, marker="o", markersize=7, linewidth=2, capsize=3, label="width", zorder=3)
         if reruns:
             ax.scatter([r["params"] for r in reruns], [r[key]["median"] for r in reruns], s=60, facecolor="white", edgecolor=BLUE,
-                       linewidth=1.5, zorder=4, label=f"other trainings of w{args.ref} (same config and seed)")
+                       linewidth=1.5, zorder=4, label=f"w{args.ref} reruns")
         for r in curve:
             ax.annotate(r["label"], (r["params"], r[key]["median"]), textcoords="offset points", xytext=(-8, 8), ha="right", fontsize=8, color=INK_2)
         for i, r in enumerate(variants):
@@ -133,7 +133,7 @@ def main():
             ax.axhline(oracle, color=INK_2, linestyle="--", linewidth=1)
             ax.annotate(f"oracle {oracle:.2f} dB", (px[0], oracle), textcoords="offset points", xytext=(0, 4), fontsize=8, color=INK_2)
         ax.set_xscale("log")
-        ax.set_xlabel("parameters (log scale); fp32 weights: " + ", ".join(f"{r['label']} {r['fp32_mib']:.0f} MiB" for r in curve), fontsize=8)
+        ax.set_xlabel("parameters (log scale)")
         ax.set_ylabel("dB"); ax.set_title(title)
         ax.legend(loc="lower right", fontsize=8)
     if ref is not None:  # central panel: paired difference per track against the reference width (the measure that settles it)
@@ -143,13 +143,13 @@ def main():
             ax.errorbar(x, m, yerr=[[a - r["vs_ref"]["lo"] for a, r in zip(m, rows)], [r["vs_ref"]["hi"] - a for a, r in zip(m, rows)]],
                         capsize=3, **kw)
         paired_err(curve, [r["params"] for r in curve], color=BLUE, marker="o", markersize=7, linewidth=2, zorder=3,
-                   label=f"U-Net width vs w{args.ref}")
+                   label="width")
         if reruns:
             paired_err(reruns, [r["params"] * (1.12 + 0.12 * i) for i, r in enumerate(reruns)], color=BLUE, marker="o", markersize=7,
-                       markerfacecolor="white", linestyle="none", zorder=4, label=f"other trainings of w{args.ref} (rerun noise)")
+                       markerfacecolor="white", linestyle="none", zorder=4, label=f"w{args.ref} reruns")
         for i, r in enumerate(variants):  # variants (loss, compression) to the left of the reference point
             paired_err([r], [r["params"] / (1.12 + 0.12 * i)], color=[ORANGE, AQUA, INK_2][i % 3], marker="D", markersize=6,
-                       linestyle="none", zorder=4, label=f"{r['label']} (w{r['width']})")
+                       linestyle="none", zorder=4, label=r["label"])
         for r in curve:
             ax.annotate(f"{r['label']}  {r['vs_ref']['median_diff']:+.2f}", (r["params"], r["vs_ref"]["median_diff"]),
                         textcoords="offset points", xytext=(-8, 8), ha="right", fontsize=8, color=INK_2)
@@ -157,10 +157,10 @@ def main():
         ax.set_xscale("log")
         ax.margins(x=0.12)
         ax.set_xlabel("parameters (log scale)")
-        ax.set_ylabel(f"SDR difference vs w{args.ref}, paired per track (dB)")
-        ax.set_title(f"Paired SDR difference vs w{args.ref} (median, 95% CI)")
+        ax.set_ylabel(f"Δ SDR vs w{args.ref} (dB)")
+        ax.set_title(f"SDR vs w{args.ref} (paired)")
         ax.legend(loc="lower right", fontsize=8)
-    fig.suptitle(f"Size / quality on {len(common)} test tracks (bars: 95% bootstrap CI of the median; one seed per width)",
+    fig.suptitle(f"Size vs quality, {len(common)} test tracks (95% CI, one seed)",
                  fontweight="bold")
     save(fig, f"{args.out}.png")
     with open(f"{FIG_DIR}/{args.out}.json", "w") as f:

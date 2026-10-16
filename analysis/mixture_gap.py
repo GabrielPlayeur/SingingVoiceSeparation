@@ -137,9 +137,9 @@ def main():
     ax.hist(snr, bins=bins, color=BLUE, edgecolor="white")
     ax.axvline(np.median(snr), color=INK, linewidth=1.5)
     ax.text(np.median(snr), ax.get_ylim()[1] * 0.95, f" median {np.median(snr):.1f} dB", va="top", color=INK_2)
-    ax.set_xlabel("residual SNR: 10·log10(‖mixture‖² / ‖mixture − (vocals + accomp.)‖²)  [dB]")
+    ax.set_xlabel("residual SNR (dB)")
     ax.set_ylabel("tracks")
-    ax.set_title(f"Gap per track ({len(rows)} tracks)")
+    ax.set_title(f"Per track ({len(rows)} tracks)")
 
     ax = axes[1]
     sr_ratio = np.array(spec_ratio)
@@ -149,7 +149,7 @@ def main():
     ax.plot(freqs, med, color=BLUE, linewidth=2)
     ax.set_xlabel("frequency (kHz)")
     ax.set_ylabel("residual / mixture (dB)")
-    ax.set_title("Frequency distribution (median, 10–90 % band)")
+    ax.set_title("By frequency (median, 10–90 %)")
 
     ax = axes[2]
     both = [(r["oracle_recon"], r["oracle_real"]) for r in rows if "oracle_recon" in r and not np.isnan(r["oracle_recon"])]
@@ -160,14 +160,14 @@ def main():
         ax.plot(lim, lim, color=INK_2, linewidth=1, linestyle="--")
         ax.set_xlim(lim)
         ax.set_ylim(lim)
-        ax.set_xlabel("oracle on rebuilt mixture (SI-SDR, dB)")
-        ax.set_ylabel("same mask on the true mixture (dB)")
-        ax.set_title(f"Effect on the oracle ({len(both)} test tracks)")
+        ax.set_xlabel("oracle SI-SDR, summed stems (dB)")
+        ax.set_ylabel("same mask, official mixture (dB)")
+        ax.set_title(f"Oracle ({len(both)} test tracks)")
         print(f"Oracle SI-SDR: rebuilt {np.median(a):.2f} dB, true mixture {np.median(b):.2f} dB, "
               f"median gap {np.median(a - b):.2f} dB")
     else:
         ax.axis("off")
-    fig.suptitle("Compressed MUSDB18: the official mixture is not the sum of the stems", fontweight="bold")
+    fig.suptitle("Official mixture vs sum of the stems", fontweight="bold")
     save(fig, "mixture_gap.png")
 
 

@@ -202,8 +202,7 @@ def cmd_plot(args):
     axes[2].axhline(0, color=INK_2, linewidth=1)
     for ax in axes:
         ax.legend(fontsize=8)
-    fig.suptitle("Training loss of the augmented runs is measured on augmented data: compare gaps within a run, not between "
-                 "augmented and plain runs", fontsize=9, color=INK_2)
+    fig.suptitle("Augmented runs: training loss is on augmented data", fontsize=9, color=INK_2)
     save(fig, "convergence.png")
 
 

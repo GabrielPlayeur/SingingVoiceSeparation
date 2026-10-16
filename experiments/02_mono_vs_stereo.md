@@ -45,7 +45,7 @@ My first comparison put the mono model under the mono protocol against the stere
 
 (The median of paired differences isn't the difference of medians, which is why the mono-protocol row can show a higher median for stereo and a negative paired difference.)
 
-![mono vs stereo](../figures/compare_mono_stereo_protocole_stereo.png)
+![mono vs stereo](../figures/compare_mono_stereo_sdr_stereo_excl.png)
 
 Stereo protocol, SDR, without the 2 *PR* tracks whose voice is almost inaudible. With all 50 tracks the median difference is +0.04 dB, without them +0.05 dB.
 

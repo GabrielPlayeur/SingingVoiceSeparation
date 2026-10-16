@@ -69,7 +69,7 @@ def strip(ax, columns, metric, tracks):
                                         f"{c[3]['wins']}/{c[3]['n']} better" for c in columns], fontsize=8)
     ax.set_xlim(-0.6, len(columns) - 0.2)
     ax.set_ylim(CLIP[0] - 0.1, CLIP[1] + 0.1)
-    ax.set_ylabel(f"{metric} difference vs baseline (dB)")
+    ax.set_ylabel(f"Δ {metric} vs baseline (dB)")
     ax.grid(axis="x", visible=False)
 
 
@@ -83,7 +83,7 @@ def main():
                     help="another training of the reference (same config, same seed), repeatable; '' to omit it "
                          "(default: 'baseline rerun'=outputs/eval_stereo.json)")
     ap.add_argument("--out", default="loss_study")
-    ap.add_argument("--title", default="Waveform losses vs L1 magnitude baseline")
+    ap.add_argument("--title", default="Waveform losses vs baseline")
     args = ap.parse_args()
     setup_style()
     reruns = [r for r in (args.rerun if args.rerun is not None else ["outputs/eval_stereo.json"]) if r]
@@ -145,11 +145,10 @@ def main():
     val_curves(axes[0], args.runs, curves, results, color)
 
     strip(axes[1], columns["sdr"], "SDR", tracks)
-    axes[1].set_title("Test SDR, paired per track\n(bar: median, line: 95% CI; off-scale tracks labelled in dB)")
+    axes[1].set_title("Test SDR (paired)")
     strip(axes[2], columns["si_sdri"], "SI-SDRi", tracks)
-    axes[2].set_title("Test SI-SDRi, paired per track")
-    fig.suptitle(f"{args.title} (one seed; grey columns = other trainings of the same baseline: rerun noise)"
-                 if reruns else f"{args.title} (one seed, same machine)", fontweight="bold")
+    axes[2].set_title("Test SI-SDRi (paired)")
+    fig.suptitle(args.title, fontweight="bold")
     save(fig, f"{args.out}.png")
     with open(os.path.join(FIG_DIR, f"{args.out}.json"), "w") as f:
         json.dump(results, f, indent=2)
@@ -180,8 +179,8 @@ def val_curves(ax, runs, curves, results, color, min_gap=0.08):
     ax.set_ylim(1.5, 4.6)
     ax.set_xlabel("epoch")
     ax.set_ylabel("val/si_sdr_median (dB)")
-    ax.set_title(f"Validation (thin: raw, thick: {LAST}-epoch moving average)")
-    ax.legend(loc="lower right", title=f"mean of last {LAST} epochs", title_fontsize=8, fontsize=8)
+    ax.set_title(f"Validation ({LAST}-epoch mean)")
+    ax.legend(loc="lower right", title=f"last-{LAST} mean", title_fontsize=8, fontsize=8)
 
 
 def validation_only(args, curves, results, color):
@@ -200,10 +199,10 @@ def validation_only(args, curves, results, color):
     bx.axvline(ref["last_mean"], color=INK_2, linestyle="--", linewidth=1)
     bx.set_yticks(pos, order)
     bx.set_xlim(min(means) - 0.5, max(means) + 0.6)
-    bx.set_xlabel(f"mean of last {LAST} epochs ± std (dB); dashed: {args.runs[0]}")
-    bx.set_title("Validation criterion (difference vs reference)")
+    bx.set_xlabel(f"last-{LAST} mean ± std (dB)")
+    bx.set_title("Validation")
     bx.grid(axis="y", visible=False)
-    fig.suptitle(f"{args.title} (one seed, validation only: test not evaluated yet)", fontweight="bold")
+    fig.suptitle(args.title, fontweight="bold")
     save(fig, f"{args.out}.png")
     with open(os.path.join(FIG_DIR, f"{args.out}.json"), "w") as f:
         json.dump(results, f, indent=2)

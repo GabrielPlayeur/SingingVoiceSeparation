@@ -115,10 +115,10 @@ def main():
         ax.plot(epochs, y, color=c, alpha=0.25, linewidth=1)
         k = min(LAST, len(y))
         smooth = np.convolve(y, np.ones(k) / k, mode="valid")  # rolling mean over LAST epochs
-        ax.plot(epochs[k - 1:], smooth, color=c, linewidth=2, label=f"{name} (fin : {results[name]['last_mean']:.2f} dB)")
+        ax.plot(epochs[k - 1:], smooth, color=c, linewidth=2, label=f"{name} ({results[name]['last_mean']:.2f} dB)")
     ax.set_xlabel("epoch")
     ax.set_ylabel("val/si_sdr_median (dB)")
-    ax.set_title(f"Validation per epoch (thin line: raw, thick: rolling mean over {LAST})")
+    ax.set_title(f"Validation ({LAST}-epoch mean)")
     ax.set_ylim(2.0, 4.3)  # the first epochs (from -4 to 2 dB) squash the scale; the comparison is played out above 2 dB
     ax.legend(loc="lower right")
 
@@ -130,8 +130,8 @@ def main():
         bx.text(results[n]["last_mean"] + results[n]["last_std"] + 0.03, p_, f"{results[n]['last_mean']:.2f}", va="center", fontsize=9)
     bx.set_yticks(pos, order)
     bx.set_xlim(min(results[n]["last_mean"] for n in order) - 0.4, max(results[n]["last_mean"] for n in order) + 0.35)
-    bx.set_xlabel(f"mean of the last {LAST} epochs ± standard deviation (dB)")
-    bx.set_title("Selection criterion")
+    bx.set_xlabel(f"last-{LAST} mean ± std (dB)")
+    bx.set_title("Final validation")
     bx.grid(axis="y", visible=False)
     save(fig, "lr_schedule.png")
     with open(os.path.join(FIG_DIR, "lr_schedule.json"), "w") as f:

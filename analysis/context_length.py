@@ -92,8 +92,8 @@ def main():
     res_rerun = {name: row(args.ref, p, common, ref) for name, p in reruns.items()}
 
     print(f"{len(common)} common test tracks; reference: baseline trained and evaluated on {args.ref} s")
-    labels = {"train": "trained on L, evaluated on 5.93 s", "own": "trained on L, evaluated on L",
-              "infer": "baseline evaluated on L (no retraining)", "control": "control (same audio per step)"}
+    labels = {"train": "train L, eval 5.93 s", "own": "train L, eval L",
+              "infer": "baseline, eval L", "control": "control"}
     for n, rows in res.items():
         if not rows:
             continue
@@ -116,14 +116,14 @@ def main():
         print(f"\nSlope of the --train series: {slope:+.2f} dB per doubling on the medians, "
               f"{slope_paired:+.2f} dB on the paired differences (preferred)")
 
-    labels = {"train": "trained on L, evaluated with 5.93 s windows", "own": "trained on L, evaluated with L windows",
-              "infer": "baseline checkpoint evaluated with L windows", "control": "control: L = 11.88 s, batch 4 (same audio per step)"}
+    labels = {"train": "train L, eval 5.93 s", "own": "train L, eval L",
+              "infer": "baseline, eval L", "control": "control: 11.88 s, batch 4"}
     fig, axes = plt.subplots(1, 3, figsize=(18, 5.2), constrained_layout=True)
     style = {"train": (BLUE, "o", "-"), "own": (ORANGE, "s", "--"), "infer": (AQUA, "^", ":"), "control": (INK, "D", "none")}
     ticks = sorted({r["seconds"] for rows in res.values() for r in rows})
-    panels = ((axes[0], "vs_ref", "a) Paired SDR difference vs baseline (median, 95% CI)", "SDR difference vs baseline (dB)"),
-              (axes[1], "vs_ref_si_sdri", "b) Paired SI-SDRi difference vs baseline", "SI-SDRi difference vs baseline (dB)"),
-              (axes[2], None, "c) Median test SDR per run (noisy: ~0.3 dB between reruns)", "dB"))
+    panels = ((axes[0], "vs_ref", "a) SDR vs baseline (paired)", "Δ SDR (dB)"),
+              (axes[1], "vs_ref_si_sdri", "b) SI-SDRi vs baseline (paired)", "Δ SI-SDRi (dB)"),
+              (axes[2], None, "c) Test SDR (median)", "dB"))
     for ax, key, title, ylabel in panels:
         for n, rows in res.items():
             if not rows:
@@ -146,7 +146,7 @@ def main():
             y = r[key]["median_diff"] if key else r["sdr"]["median"]
             lo, hi = (r[key]["lo"], r[key]["hi"]) if key else (r["sdr"]["lo"], r["sdr"]["hi"])
             ax.errorbar([x], [y], yerr=[[y - lo], [hi - y]], color=BLUE, marker="o", markerfacecolor="white", markersize=7,
-                        linestyle="none", capsize=3, zorder=4, label="other trainings of the baseline (rerun noise)" if i == 0 else None)
+                        linestyle="none", capsize=3, zorder=4, label="baseline reruns" if i == 0 else None)
         if key:
             ax.axhline(0, color=INK_2, linestyle="--", linewidth=1)
         ax.axvline(RF_SECONDS, color=INK_2, linestyle=":", linewidth=1)
@@ -154,9 +154,9 @@ def main():
                     textcoords="offset points", fontsize=8, color=INK_2, ha="right", va="top")
         ax.set_xscale("log", base=2)
         ax.set_xticks(ticks, [f"{t:g}" for t in ticks])
-        ax.set_xlabel("training crop length L (s, log scale)"); ax.set_ylabel(ylabel); ax.set_title(title)
+        ax.set_xlabel("crop length L (s)"); ax.set_ylabel(ylabel); ax.set_title(title)
         ax.legend(loc="lower center", fontsize=7)
-    fig.suptitle(f"Context length on {len(common)} test tracks (one seed per length; reference: baseline trained on {args.ref} s)",
+    fig.suptitle(f"Context length, {len(common)} test tracks (one seed)",
                  fontweight="bold")
     save(fig, f"{args.out}.png")
     with open(f"{FIG_DIR}/{args.out}.json", "w") as f:

@@ -73,7 +73,7 @@ Order: **`power_loss` first** (that's where the papers show an effect), then `po
 ## Results
 
 ```bash
-uv run python -m analysis.loss_study --out power_study --title "Amplitude compression vs L1 magnitude baseline" \
+uv run python -m analysis.loss_study --out power_study --title "Amplitude compression vs baseline" \
   --rerun rerun_local=outputs/eval_stereo.json --rerun rerun_w16=outputs/server/size-v1/w16_s42/eval.json \
   --run baseline=outputs/server/loss-v1/baseline_s42 --run power_loss=outputs/server/power-v1/power_loss_s42 \
   --run power_in=outputs/server/power-v1/power_in_s42 --run power_both=outputs/server/power-v1/power_both_s42 \

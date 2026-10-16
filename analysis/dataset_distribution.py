@@ -60,17 +60,17 @@ def main():
         left += c
     ax.set_yticks(y, [SHORT_ORIGIN.get(o, o) for o in origins])
     ax.invert_yaxis()
-    ax.set_title("Origine")
+    ax.set_title("Origin")
     ax.set_xlabel("tracks")
 
     ax = axes[2]
     bins = np.linspace(0, max(d.max() for d in durations.values()) + 0.5, 14)
     for s in subsets:
         ax.hist(durations[s], bins=bins, histtype="step", linewidth=2, color=colors[s], label=s, density=True)
-    ax.set_title("Track duration")
+    ax.set_title("Duration")
     ax.set_xlabel("minutes")
     ax.set_ylabel("density")
-    fig.suptitle("MUSDB18: distribution of the tracks across the subsets", fontweight="bold")
+    fig.suptitle("MUSDB18 subsets", fontweight="bold")
     save(fig, "dataset_distribution.png")
 
     # --- artists shared between subsets (potential leakage, B6 of the walkthrough)
@@ -98,7 +98,7 @@ def main():
     ax.set_yticks(y, top)
     ax.invert_yaxis()
     ax.set_xlabel("tracks")
-    ax.set_title(f"Most represented artists ({len(allart)} artists in total)")
+    ax.set_title(f"Top artists ({len(allart)} in total)")
     ax.legend(loc="lower right")
     save(fig, "dataset_artists.png")
 

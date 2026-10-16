@@ -58,7 +58,7 @@ def main():
     ax.plot(lim, lim, color=INK_2, linestyle="--", linewidth=1)
     ax.set_xlim(lim); ax.set_ylim(lim)
     ax.set_xlabel(f"{args.metric} {na} (dB)"); ax.set_ylabel(f"{args.metric} {nb} (dB)")
-    ax.set_title("Per track (above the diagonal: " + nb + " meilleur)")
+    ax.set_title(f"Per track (above diagonal: {nb} better)")
 
     ax = axes[1]
     for x, y in zip(a, b):
@@ -66,17 +66,17 @@ def main():
     ax.scatter(np.zeros(len(a)), a, color=INK_2, s=12, zorder=3); ax.scatter(np.ones(len(b)), b, color=INK_2, s=12, zorder=3)
     ax.plot([0, 1], [np.nanmedian(a), np.nanmedian(b)], color=INK, linewidth=3)
     ax.set_xticks([0, 1], [na, nb]); ax.set_xlim(-0.3, 1.3); ax.set_ylabel("dB")
-    ax.set_title("Same track, two models (bold = median)")
+    ax.set_title("Paired tracks")
 
     ax = axes[2]
     ax.hist(d, bins=20, color=BLUE, edgecolor="white")
     ax.axvline(0, color=INK_2, linewidth=1, linestyle="--")
-    ax.axvspan(lo, hi, color=ORANGE, alpha=0.25, label=f"95% CI of the median [{lo:+.2f}, {hi:+.2f}]")
+    ax.axvspan(lo, hi, color=ORANGE, alpha=0.25, label=f"95% CI [{lo:+.2f}, {hi:+.2f}]")
     ax.axvline(m, color=ORANGE, linewidth=2)
     ax.set_xlabel(f"{nb} − {na} (dB)"); ax.set_ylabel("tracks"); ax.legend(loc="upper left", fontsize=8)
-    ax.set_title(f"Paired difference (Wilcoxon p = {w.pvalue:.2g})")
+    ax.set_title(f"Difference (Wilcoxon p = {w.pvalue:.2g})")
     fig.suptitle(f"{na} vs {nb} on {len(tracks)} test tracks", fontweight="bold")
-    save(fig, f"compare_{na}_{nb}{'' if args.metric == 'sdr' else '_' + args.metric}{'_sans_exclus' if args.exclude else ''}.png")
+    save(fig, f"compare_{na}_{nb}{'' if args.metric == 'sdr' else '_' + args.metric}{'_excl' if args.exclude else ''}.png")
 
 
 if __name__ == "__main__":

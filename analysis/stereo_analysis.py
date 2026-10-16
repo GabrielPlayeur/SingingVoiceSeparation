@@ -69,10 +69,10 @@ def main():
             if c == 0:
                 ax.set_ylabel("frequency (kHz)")
             if r == 1:
-                ax.set_xlabel("temps (s)")
+                ax.set_xlabel("time (s)")
     ax.set_ylim(0, 8)
-    fig.colorbar(im, ax=axes, label="STFT amplitude (dB, ref. = max of the row)", shrink=0.8)
-    fig.suptitle(f"{args.example}: the vocals are mostly in Mid, the accompaniment has significant Side energy", fontweight="bold")
+    fig.colorbar(im, ax=axes, label="dB (re. row max)", shrink=0.8)
+    fig.suptitle(f"{args.example}: Mid / Side spectrograms", fontweight="bold")
     save(fig, "stereo_spectrograms.png")
 
     # ---------- 2) statistics over all training + validation tracks
@@ -118,18 +118,18 @@ def main():
     ax.set_xticks(centers, [f"{int(lo)}–{int(hi)}" for lo, hi in zip(band_edges[:-1], band_edges[1:])], rotation=30)
     ax.set_xlabel("frequency band (Hz)")
     ax.set_ylabel("Side energy / Mid energy (dB)")
-    ax.set_title("Stereo width per band (median, 25–75 % band)")
+    ax.set_title("Side / Mid by band (median, 25–75 %)")
     ax.legend()
 
     ax = axes[1]
     bins = np.linspace(-0.2, 1.0, 25)
     ax.hist(cv, bins=bins, color=BLUE, alpha=0.75, label="vocals", edgecolor="white")
     ax.hist(ca, bins=bins, color=ORANGE, alpha=0.75, label="accompaniment", edgecolor="white")
-    ax.set_xlabel("correlation between the L and R channels")
+    ax.set_xlabel("correlation")
     ax.set_ylabel("tracks")
-    ax.set_title("A correlation of 1 = strictly mono source")
+    ax.set_title("Left–right correlation (1 = mono)")
     ax.legend(loc="upper left")
-    fig.suptitle(f"Spatial cues in MUSDB18 ({kept} training + validation tracks)", fontweight="bold")
+    fig.suptitle(f"Stereo cues ({kept} train + val tracks)", fontweight="bold")
     save(fig, "stereo_statistics.png")
 
 

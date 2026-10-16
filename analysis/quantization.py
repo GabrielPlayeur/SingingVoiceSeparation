@@ -47,10 +47,10 @@ def panel_sweep(ax, data):
     ax.barh(y, vals, color=colors, height=0.7, zorder=3)
     ax.set_yticks(y, names, fontsize=7.5)
     ax.axvline(0, color=INK_2, linewidth=1)
-    ax.set_xlabel("Δ median validation SI-SDR vs fp32 (dB)")
+    ax.set_xlabel("Δ SI-SDR vs fp32 (dB)")
     for yi, v in zip(y, vals):
         ax.annotate(f"{v:+.2f}", (v, yi), textcoords="offset points", xytext=(-3 if v < 0 else 3, -3), ha="right" if v < 0 else "left", fontsize=7, color=INK_2)
-    ax.set_title(f"PTQ ablations (simulation, 240 validation crops; fp32 {data['fp32']['median']:.2f} dB)")
+    ax.set_title(f"PTQ ablations (fp32 {data['fp32']['median']:.2f} dB)")
     ax.set_xlim(min(vals.min() * 1.2, -0.2), 0.15)
 
 
@@ -64,7 +64,7 @@ def panel_sensitivity(ax, data):
     ax.set_xticks(x, labels, rotation=90, fontsize=7)
     ax.axhline(0, color=INK_2, linewidth=1)
     ax.set_ylabel("Δ SI-SDR (dB)")
-    ax.set_title("One quantizer at a time (W8A7 min-max, all others in float; 120 crops)")
+    ax.set_title("One quantizer at a time")
     ax.bar([0], [0], color=BLUE, label="activation"); ax.bar([0], [0], color=ORANGE, label="weights")
     ax.legend(loc="lower right", fontsize=8)
 
@@ -97,9 +97,9 @@ def main():
             init = "min-max" if cfg["act_range"] == "minmax" else f"p{cfg['percentile']:g}"
             sched = "cosine" if d.get("cosine") else "constant"
             if control:
-                label, color, ls, mk = f"fp32 control (no quantizer), LR {lr_str(d['lr'])}", INK_2, "--", "s"
+                label, color, ls, mk = f"fp32 control, LR {lr_str(d['lr'])}", INK_2, "--", "s"
             else:
-                label, color, mk = f"QAT, {init} init, LR {lr_str(d['lr'])}" + ("" if sched == "cosine" else ", constant LR"), \
+                label, color, mk = f"QAT, {init}, LR {lr_str(d['lr'])}" + ("" if sched == "cosine" else ", constant"), \
                     LR_COLORS.get(d["lr"], INK), "o"
                 ls = ":" if init == "min-max" else "-"
             xs, ys = [r["epoch"] for r in h], [r["val_median"] for r in h]
@@ -112,8 +112,8 @@ def main():
         ax.axhline(ref, color=INK, linestyle="--", linewidth=1)
         ax.annotate(f"fp32 {ref:.2f} dB", (0, ref), textcoords="offset points", xytext=(2, 4), fontsize=8)
         ax.set_xlim(-0.3, max(r[1] for r in ends) + 2.2)
-        ax.set_xlabel("QAT epoch (0 = starting PTQ model)"); ax.set_ylabel("median validation SI-SDR (dB, 240 crops)")
-        ax.set_title("Quantization-aware training, W8A7 (simulation); colour = learning rate, dotted = min-max init")
+        ax.set_xlabel("QAT epoch"); ax.set_ylabel("validation SI-SDR (dB)")
+        ax.set_title("Quantization-aware training, W8A7")
         ax.legend(fontsize=7.5, loc="lower right")
         save(fig, f"{args.out}_qat.png")
 

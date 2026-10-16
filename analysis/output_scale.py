@@ -87,12 +87,12 @@ def main():
         c = colors[i % len(colors)]
         axes[0].hist(r["cost"], bins=np.linspace(0, max(3, np.percentile(r["cost"], 99)), 40), alpha=0.55, color=c, label=name)
         axes[1].hist(r["alpha_db"], bins=np.linspace(-10, 10, 41), alpha=0.55, color=c, label=name)
-    axes[0].set_xlabel("scale cost: SNR(α·ŝ) − SNR(ŝ)  (dB)")
+    axes[0].set_xlabel("SNR gain from rescaling (dB)")
     axes[0].set_ylabel("validation crops")
-    axes[0].set_title("What the output level costs")
+    axes[0].set_title("Cost of the output level")
     axes[1].axvline(0, color=INK_2, linewidth=1, linestyle="--")
-    axes[1].set_xlabel("optimal gain α of the estimated vocals (dB)   [> 0: estimated too quiet]")
-    axes[1].set_title("Level of the estimated vocals")
+    axes[1].set_xlabel("optimal gain α (dB; > 0 = too quiet)")
+    axes[1].set_title("Output level")
     axes[0].legend()
     save(fig, "output_scale.png")
     with open(os.path.join(FIG_DIR, "output_scale.json"), "w") as f:

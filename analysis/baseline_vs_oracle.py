@@ -59,7 +59,7 @@ def main():
         ax.annotate(artist(tracks[i]) + " – " + tracks[i].split(" - ")[1][:14], (ora[i], sdr[i]),
                     xytext=(6, -4), textcoords="offset points", fontsize=8, color=INK_2)
     ax.set_xlim(lim); ax.set_ylim(lim)
-    ax.set_xlabel("SDR oracle (dB)"); ax.set_ylabel("model SDR (dB)")
+    ax.set_xlabel("oracle SDR (dB)"); ax.set_ylabel("model SDR (dB)")
     ax.set_title(f"Per track (Spearman ρ = {rho:.2f})")
 
     # (2) distributions of the 4 metrics
@@ -76,7 +76,7 @@ def main():
         ax.annotate(f"{m:.1f}", (x + 0.38, m), fontsize=9, color=INK, va="center")
     ax.set_xticks(pos, [g[0] for g in groups])
     ax.set_ylabel("dB")
-    ax.set_title("Distribution over the tracks (median annotated)")
+    ax.set_title("Distribution")
 
     # (3) per-track gap, sorted
     ax = axes[2]
@@ -85,8 +85,8 @@ def main():
     ax.axhline(np.median(gap), color=INK, linewidth=1.5)
     ax.text(0, np.median(gap) + 0.25, f"median {np.median(gap):.1f} dB", ha="left", color=INK_2)
     ax.set_xlabel("tracks, sorted"); ax.set_ylabel("oracle SDR − model SDR (dB)")
-    ax.set_title("Room for improvement per track")
-    fig.suptitle(f"{args.tag} vs oracle (ideal mask bounded to [0, 1], mixture phase)", fontweight="bold")
+    ax.set_title("Gap per track")
+    fig.suptitle(f"{args.tag} baseline vs oracle", fontweight="bold")
     save(fig, f"{args.tag}_vs_oracle.png")
 
     # (4) per genre
@@ -105,7 +105,7 @@ def main():
         ax.scatter(np.nanmedian(sdr[k]), yi, color=BLUE, s=70, edgecolor="white", linewidth=1.2, zorder=4)
         ax.scatter(np.nanmedian(ora[k]), yi, color=ORANGE, s=70, edgecolor="white", linewidth=1.2, zorder=4)
     ax.set_yticks(y, [f"{g} (n={(genres == g).sum()})" for g in uniq]); ax.invert_yaxis()
-    ax.set_xlabel("SDR (dB): median per genre, points = tracks of the model")
+    ax.set_xlabel("SDR (dB)")
     ax.scatter([], [], color=BLUE, s=50, label="model"); ax.scatter([], [], color=ORANGE, s=50, label="oracle")
     ax.legend(loc="lower right")
     ax.set_title("SDR per genre")
