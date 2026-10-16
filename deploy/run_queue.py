@@ -8,6 +8,7 @@ in the same location; while one evaluates, the others train).
 
 - Works from a frozen checkout of the tag (git worktree in RUNS_DIR/<tag>/_code): the code can keep changing.
 - Refuses to start if the working tree is not clean (only a warning with --dry-run).
+- `ckpt: last` on a queue entry evaluates last.ckpt instead of the best-on-validation checkpoint (fixed-budget runs).
 - A run = folder RUNS_DIR/<tag>/<name>_s<seed>/: train.log, eval.log, eval.json, metadata.json, hydra/ (resolved config),
   outputs/ (checkpoints, offline wandb folder). A failed run does not stop the others. Rerunning the same command resumes:
   the finished phases are skipped (--force to redo everything).
@@ -33,7 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _env import DEPLOY_DIR, REPO_ROOT, cpu_cores, load_env, mem_total_gb
+from _env import DEPLOY_DIR, REPO_ROOT, cpu_cores, find_ckpt, load_env, mem_total_gb
 
 from omegaconf import OmegaConf  # noqa: E402
 
@@ -49,6 +50,7 @@ class Job:
     name: str
     seed: int
     overrides: list
+    ckpt: str = "best"   # checkpoint to evaluate: "best" (best on validation) or "last" (final weights, fixed-budget runs)
     rundir: Path = None
     meta: dict = field(default_factory=dict)
 
@@ -77,7 +79,10 @@ def build_jobs(cfg, groups, only):
         if only and e.name not in only:
             continue
         for seed in e.get("seeds", cfg.get("seeds", [42])):
-            jobs.append(Job(e.name, int(seed), [str(o) for o in e.overrides]))
+            ckpt = e.get("ckpt", "best")
+            if ckpt not in ("best", "last"):
+                sys.exit(f"ERROR: experiment {e.name}: ckpt={ckpt!r}, expected 'best' or 'last'")
+            jobs.append(Job(e.name, int(seed), [str(o) for o in e.overrides], ckpt))
     unknown = (only or set()) - names
     if unknown:
         sys.exit(f"ERROR: --only: unknown experiments {sorted(unknown)} (available: {sorted(names)})")
@@ -107,13 +112,6 @@ def train_cmd(job, py, env, tag, train_workers):
 def eval_cmd(job, py, env, ckpt, eval_workers, extra=()):
     return [py, "-m", "src.evaluate", ckpt, "--dataset-path", env["MUSDB_PROCESSED"], "-o", str(job.rundir / "eval.json"),
             "-w", str(eval_workers), "--oracle-cache", env["ORACLE_CACHE_DIR"], *extra]
-
-
-def find_ckpt(rundir):
-    """Best-on-validation checkpoint of a run: the most recent .ckpt that is neither last.ckpt nor a periodic-* one."""
-    found = [c for c in glob.glob(str(rundir / "outputs" / "VoiceSeparation" / "*" / "checkpoints" / "*.ckpt"))
-             if not os.path.basename(c).startswith(("last", "periodic"))]
-    return max(found, key=os.path.getmtime) if found else None
 
 
 def save_meta(job):
@@ -155,12 +153,12 @@ def run_job(job, ctx):
     meta_path = job.rundir / "metadata.json"
     if meta_path.exists() and not ctx["force"]:
         job.meta = json.loads(meta_path.read_text())
-    job.meta.update(name=job.name, seed=job.seed, tag=ctx["tag"], commit=ctx["commit"], overrides=job.overrides)
+    job.meta.update(name=job.name, seed=job.seed, tag=ctx["tag"], commit=ctx["commit"], overrides=job.overrides, ckpt=job.ckpt)
     child_env = {**os.environ, "WANDB_MODE": ctx["env"]["WANDB_MODE"], "PYTHONUNBUFFERED": "1", "HYDRA_FULL_ERROR": "1"}
     py = ctx["py"]
 
     # --- training
-    if phase_done(job, "train") and find_ckpt(job.rundir):
+    if phase_done(job, "train") and find_ckpt(job.rundir, job.ckpt):
         print(f"[{job.key}] training already finished, skipping", flush=True)
     else:
         shutil.rmtree(job.rundir / "outputs", ignore_errors=True)  # leftovers of an interrupted run
@@ -177,7 +175,7 @@ def run_job(job, ctx):
             save_meta(job)
             print(f"[{job.key}] training FAILED (code {rc}): see {job.rundir / 'train.log'}", flush=True)
             return job
-    ckpt = find_ckpt(job.rundir)
+    ckpt = find_ckpt(job.rundir, job.ckpt)
     job.meta["checkpoint"] = ckpt
     if ckpt:
         job.meta["wandb_run_id"] = Path(ckpt).parents[1].name  # outputs/VoiceSeparation/<id>/checkpoints/x.ckpt

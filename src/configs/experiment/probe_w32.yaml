@@ -1,0 +1,14 @@
+# @package _global_
+# Convergence probe (phase 1): stereo baseline (constant lr 1e-3, amplitude L1 loss), width 32, WITHOUT training augmentation,
+# 1000 epochs (63,000 steps) and no early stopping, to see where the validation curve plateaus (fixes the fixed budget B).
+# The last checkpoint is the one to evaluate (queue entry `ckpt: last`). No periodic checkpoints (w32: ~150 MB each, disk).
+data:
+  channels: 2
+model:
+  base_channels: 32
+training:
+  max_epochs: 1000
+  early_stopping_patience: null
+  checkpoint_every_n_epochs: null
+wandb:
+  run_name: unet-probe-w32

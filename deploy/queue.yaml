@@ -48,3 +48,10 @@ experiments:
   - {name: ctx9,         group: context, overrides: ["experiment=stereo_ctx9"]}
   - {name: ctx12,        group: context, overrides: ["experiment=stereo_ctx12"]}
   - {name: ctx12_b4,     group: context, overrides: ["experiment=stereo_ctx12_b4"]}
+
+  # --- 6. convergence probe (phase 1 of the re-run plan): 1000 epochs, no early stopping, seed 42, last checkpoint evaluated.
+  #        P1/P2 (w16) keep a weights-only checkpoint every 100 epochs; P3/P4 (w32) do not (disk). Launch with --parallel 4.
+  - {name: probe_w16,      group: probe, ckpt: last, overrides: ["experiment=probe_w16"]}
+  - {name: probe_w16_aug,  group: probe, ckpt: last, overrides: ["experiment=probe_w16_aug"]}
+  - {name: probe_w32,      group: probe, ckpt: last, overrides: ["experiment=probe_w32"]}
+  - {name: probe_w32_aug,  group: probe, ckpt: last, overrides: ["experiment=probe_w32_aug"]}

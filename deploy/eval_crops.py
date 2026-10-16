@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Evaluates already-trained checkpoints at OTHER inference window lengths ("context length" experiment,
-experiments/07_context_length.md). Nothing is retrained: `src.evaluate --crop-length N` on the best checkpoint of the run.
+experiments/07_context_length.md). Nothing is retrained: `src.evaluate --crop-length N` on the checkpoint of the run chosen by its queue entry (`ckpt`, default best).
 
     python deploy/eval_crops.py --tag ctx-v1 --eval ctx3_s42=130560 --eval ctx12_s42=523776 \
         --eval loss-v1/baseline_s42=130560,392704,523776 [--parallel 2] [--dry-run]
@@ -22,14 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _env import REPO_ROOT, cpu_cores, load_env
-
-
-def find_ckpt(rundir):
-    """Best-on-validation checkpoint of a run: the most recent .ckpt that is neither last.ckpt nor a periodic-* one."""
-    found = [c for c in glob.glob(str(rundir / "outputs" / "VoiceSeparation" / "*" / "checkpoints" / "*.ckpt"))
-             if not os.path.basename(c).startswith(("last", "periodic"))]
-    return max(found, key=os.path.getmtime) if found else None
+from _env import REPO_ROOT, cpu_cores, find_ckpt, load_env
 
 
 def parse(spec, tag, runs_dir):

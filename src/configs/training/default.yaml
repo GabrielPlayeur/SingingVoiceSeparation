@@ -3,4 +3,4 @@ early_stopping_patience: 30   # null disables early stopping (fixed budget)
 early_stopping_min_delta: 0.0 # dB
 log_every_n_steps: 50
 evaluate_at_end: true
-checkpoint_every_n_epochs: 100  # periodic checkpoints (periodic-epoch*-step*.ckpt, all kept); null disables
+checkpoint_every_n_epochs: null  # periodic checkpoints (periodic-epoch*-step*.ckpt, weights only, all kept), e.g. 100; null = none (disk)

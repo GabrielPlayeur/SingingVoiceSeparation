@@ -35,8 +35,7 @@ FILTERS=(--exclude='_code/')
 for run in "${CKPT_RUNS[@]}"; do
     log "creating the slimmed checkpoint of $run on the server (if absent)"
     remote "d='$SRC/$run'; slim='$SERVER_REPO/deploy/slim_ckpt.py'; [ -f \"\$slim\" ] || slim='$BOOTSTRAP_DIR/deploy/slim_ckpt.py'; \
-            [ -f \"\$d/checkpoint_slim.ckpt\" ] || { ck=\$(ls -t \"\$d\"/outputs/VoiceSeparation/*/checkpoints/*.ckpt | grep -v -E '/(last|periodic)[^/]*\\.ckpt\$' | head -1); \
-            '$SERVER_REPO/.venv/bin/python' \"\$slim\" \"\$ck\" \"\$d/checkpoint_slim.ckpt\"; }" \
+            [ -f \"\$d/checkpoint_slim.ckpt\" ] || '$SERVER_REPO/.venv/bin/python' \"\$slim\" \"\$d\" \"\$d/checkpoint_slim.ckpt\"" \
         || die "cannot create the slimmed checkpoint of $run (exact run name? see ls $SRC)"
     FILTERS+=(--include="$run/checkpoint_slim.ckpt")
 done
