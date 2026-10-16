@@ -15,3 +15,5 @@ training:
   max_epochs: 1000
   early_stopping_patience: null
   checkpoint_every_n_epochs: null
+wandb:
+  run_name: unet-recipe   # needed: run_queue.py overrides wandb.run_name, which fails if the key does not exist (final-v1)
