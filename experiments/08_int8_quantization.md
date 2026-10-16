@@ -4,7 +4,7 @@
 
 **Status.** Done, run locally (GTX 1650 for the simulation and QAT, CPU for the real int8) on one checkpoint: the stereo baseline, one seed. Validation numbers are measured on fixed excerpts; test numbers are on the 50 test tracks. Nothing here is a statement about other models: the same pipeline works on any checkpoint (`python -m src.quantize`), but I only ran it on this one.
 
-**Result in one paragraph.** Weights in int8 are free (−0.03 dB); the cost is in the activations, and almost all of it comes from the first two encoder layers with min-max ranges. Clipping the activation ranges at the 99.99th percentile brings post-training quantization to **−0.02 dB** on the test set (not distinguishable from fp32); QAT brings the real int8 model to **4.49 dB vs 4.50 dB** (−0.00 dB [−0.07, +0.07]). The model is **4× smaller (39.3 → 9.9 MB)**, but on this CPU int8 is **2.3× slower than fp32**, because of the transposed convolutions.
+**Result in one paragraph.** Weights in int8 are free (−0.03 dB); the cost is in the activations, and almost all of it comes from the first two encoder layers with min-max ranges. Clipping the activation ranges at the 99.99th percentile brings post-training quantization to **−0.02 dB** on the test set (not distinguishable from fp32); QAT brings the real int8 model to **4.49 dB vs 4.50 dB** (−0.00 dB [−0.07, +0.07]). The model is **4× smaller (39.3 → 9.9 MB)**, but on this CPU int8 is **2.3× slower than fp32**: the int8 transposed convolutions are 4× slower than in fp32, and the int8 convolutions are no faster than fp32 either.
 
 **Question.** The project asks what a small model can do under a 4 GB constraint. Quantizing the weights to int8 should divide the model size by 4. How much quality does it cost, can quantization-aware training (QAT) get it back, and does int8 actually run faster on my CPU?
 
@@ -31,17 +31,20 @@ Both papers evaluate image classification, segmentation and detection (and BERT 
 - **Simulation** (`SimUNet`): fake quantizers in floating point (PyTorch's `fake_quantize_*`, straight-through gradient), any bit width, GPU. Used for the ablations, the per-layer analysis and QAT.
 - **Real int8** (`export_int8`): PyTorch's eager `torch.ao.quantization` with the x86 (fbgemm) kernels, CPU only. Used for size and latency. ⚠ This API is flagged as deprecated in PyTorch 2.10 (migration to torchao); it still works and the version is pinned by `uv.lock`.
 
-The two agree closely but not always exactly (48 validation excerpts, 3 per track):
+The two agree closely but not always exactly (48 validation excerpts, 3 per track; `python -m src.quantize export`):
 
 | setting | val SI-SDR, simulation | val SI-SDR, real int8 | mean absolute mask difference |
 |---|---|---|---|
+| *fp32, same 48 excerpts* | *3.949* | | |
 | PTQ min-max, 7-bit activations | 3.230 | 3.236 | 0.00014 |
 | PTQ min-max, 8-bit activations | 3.759 | 3.753 | 0.00000 |
 | PTQ percentile 99.99, 7 bits | 4.035 | 3.966 | 0.0029 |
 | PTQ percentile 99.99, 8 bits | 4.112 | 4.143 | 0.0049 |
 | QAT (LR 3e-5), 7 bits | 4.433 | 4.403 | 0.0020 |
 
-With min-max ranges they are identical; with clipped ranges the real kernels differ by up to 0.07 dB (⚠ I didn't find the cause; the first suspect is how the real kernels round when many values saturate). The ablations below are simulations; the final numbers also include the real int8 model.
+**Only compare the two columns with each other, not with fp32.** On these 48 excerpts the fp32 median is 3.949 dB, and several quantized models score *above* it (QAT +0.48 dB), while on the 240 crops of the ablations and on the test set they are at or below fp32. A median over 48 excerpts jumps whenever a few values near the middle move; this table is only there to check that the real kernels compute what the simulation computes.
+
+With min-max ranges they are practically identical (≤ 0.006 dB, mask difference ≤ 0.00014); with clipped ranges the real kernels differ by up to 0.07 dB (⚠ I didn't find the cause; the first suspect is how the real kernels round when many values saturate). The ablations below are simulations; the final numbers also include the real int8 model.
 
 **Where the quantizers are** (25 activation quantizers, 13 weight quantizers):
 
@@ -104,7 +107,7 @@ All values are the change in median validation SI-SDR against fp32 (4.136 dB). `
 - **The activations are the whole problem**, and **not because of the input**: leaving the input in floating point barely changes anything (−1.12 vs −1.15 dB). My prediction (2) was wrong on the culprit.
 - **Range setting is the fix**: clipping at the 99.99th percentile recovers almost everything (−1.15 → −0.16 dB). **MSE is better than min-max but worse than the percentile here** (−0.52 vs −1.15 and −0.14 for activations only; −0.48 for W8A8). In Nagel's Table 2 (ResNet18, classification) MSE and min-max are on par at 8 bits (69.59 vs 69.60) and MSE wins at 6 and 4 bits, so I expected it to do at least as well as the percentile; I did not investigate why (⚠ the MSE objective weights all values equally, which may over-clip the tails that carry the loud bins).
 - **One bit matters with min-max, not with the percentile**: min-max with 8 full bits is −0.23 dB, against −1.15 dB with 7 bits (the `reduce_range` setting I chose as a precaution). Once the ranges are clipped, the extra bit changes nothing (W8A8 −0.19 dB at 8 bits vs −0.16 dB at 7). So the 7-bit precaution is harmless with percentile ranges and costly without them.
-- **Reproducibility.** The percentile and MSE ranges are estimated on a random subsample of the activations. My first, unseeded run of the grid gave −0.32 dB for activations-only MSE and −0.43 for W8A8 MSE; the seeded rerun above gives −0.52 and −0.48. The MSE numbers move by up to 0.2 dB with the subsample, the percentile ones by about 0.03 dB: read the MSE rows as "unstable". Keeping the input in floating point does not help (−0.27 vs −0.16 dB with percentile ranges): the input quantizer is not the problem.
+- **Reproducibility.** The percentile and MSE ranges are estimated on a random subsample of the activations. My first, unseeded run of the grid gave −0.32 dB for activations-only MSE and −0.43 for W8A8 MSE (that run's file wasn't kept); the seeded rerun above gives −0.52 and −0.48. The MSE numbers move by up to 0.2 dB with the subsample, the percentile ones by about 0.03 dB: read the MSE rows as "unstable". Keeping the input in floating point does not help (−0.27 vs −0.16 dB with percentile ranges): the input quantizer is not the problem.
 
 ### 2. Which layers hurt
 
@@ -122,7 +125,7 @@ Nagel's per-layer analysis (§ 3.7): only one quantizer is active, all the other
 | **weights**: `enc0` | −0.10 dB |
 | every other quantizer (the 6th encoder, all decoders, all other weights) | within ±0.04 dB |
 
-The damage sits in the **first two encoder layers**, the ones that work at full resolution on the raw spectrogram. Why min-max fails there, from the observed ranges (`python -m src.quantize ranges`): for `enc0.conv` the observed range is [−110.6, 87.3] while the 0.01st and 99.99th percentiles are [−24.3, 16.4]; the min-max step is 1.56 against 0.32 with the percentile (about 5×), and the maximum is 5.3× the 99.99th percentile. Every quantizer has a maximum 2.6 to 6.9× its 99.99th percentile, so outliers are everywhere; what singles out the first layers is the **absolute step**: with min-max it is 1.56 (`enc0.conv`), 1.08 (`enc1.conv`), 0.86 (`enc0.act`) and 2.12 for the input, against 0.2 to 0.6 for most deeper layers. But step size alone doesn't explain the ranking: `dec5.conv` has a step of 1.08 and costs only 0.01 dB, so how a layer's error propagates also matters (⚠ I haven't separated the two). The sensitivity numbers are not additive either: summed they exceed the combined −1.15 dB.
+The damage sits in the **first two encoder layers**, the ones that work at full resolution on the raw spectrogram. Why min-max fails there, from the observed ranges (`python -m src.quantize ranges`): for `enc0.conv` the observed range is [−110.6, 87.3] while the 0.01st and 99.99th percentiles are [−24.3, 16.4]; the min-max step is 1.56 against 0.32 with the percentile (about 5×), and the maximum is 5.3× the 99.99th percentile. Every quantizer has a maximum 2.6 to 6.9× its 99.99th percentile, so outliers are everywhere; what singles out the first layers is the **absolute step**: with min-max it is 1.56 (`enc0.conv`), 1.08 (`enc1.conv`), 0.86 (`enc0.act`) and 2.12 for the input, against 0.2 to 0.6 for most deeper layers (14 of the 21 others). But step size alone doesn't explain the ranking: `dec5.conv` has a step of 1.08, `dec4.conv` 0.94 and `cat4` 0.86, and they cost 0.01, 0.07 and 0.07 dB, so how a layer's error propagates also matters (⚠ I haven't separated the two). The sensitivity numbers are not additive either: summed they exceed the combined −1.15 dB.
 
 ### 3. QAT
 
@@ -141,6 +144,7 @@ Starting from the PTQ model (99.99th percentile ranges, frozen during training),
 
 - QAT with a small learning rate brings the gap from −0.16 dB (PTQ) to **−0.02 dB** (3e-5), which is inside the epoch-to-epoch noise of the curves (±0.03 dB with this schedule): I can't call the remaining gap real. **The control matters**: fine-tuning the same model in fp32 with the same schedule also ends at −0.03 dB, so on validation the quantized model matches an equally fine-tuned fp32 one. Fine-tuning itself does not improve the validation score here. A larger learning rate is worse (3e-4 undoes the PTQ), as expected when fine-tuning a converged model.
 - **The initialization matters a lot here**, unlike in Nagel's Table 8 (§ 4.3: "the gain is usually small and vanishes the longer the training lasts"): from min-max ranges QAT only gets to −0.53 dB. The difference with Nagel is that my activation ranges are **frozen** after calibration, while they recommend learnable ranges (§ 4.4), which could move a bad initial range. I haven't tried it, so I can't say the learnable ranges would close the gap.
+- A first run at a **constant** LR 1e-4 (`baseline.qat_p99_lr1e-4.pt`, not in the table) swung between 3.83 and 4.11 dB from one epoch to the next and ended at 4.03 dB; that's why all the runs above use a cosine schedule and keep the last epoch. Its starting PTQ score is 3.954 dB instead of 3.973. My guess is a different random subsample for the percentile ranges: the file predates the cosine runs, probably from before the calibration was seeded (⚠ not checked). That would be the same ~0.02 dB effect as in the reproducibility note above.
 - The four learning rates are compared on the same validation crops that I used to pick the best one, so the best of four is slightly optimistic; the test set (next section) is the honest number. One seed, one run per setting.
 
 ### 4. Test set
@@ -167,10 +171,20 @@ museval SDR over the 50 test tracks, same protocol as the other experiments. The
 |---|---|---|
 | `state_dict` on disk | 39.34 MB (BatchNorm included) | **9.87 MB** (3.98× smaller) |
 | latency, 1 thread (median of 7, one 5.93 s excerpt through the U-Net) | 251 to 258 ms | 585 to 611 ms (**0.42× the speed**) |
-| latency, 4 threads | 116 to 131 ms | 266 to 270 ms (**0.44× the speed**) |
+| latency, 4 threads | 116 to 131 ms | 266 to 270 ms (**0.44× to 0.49× the speed**) |
 
-- **The model is 4× smaller, but int8 is 2.3× slower than fp32 on this CPU.** The other measurements I took, with other jobs running on the machine, are noisier but in the same range (int8 0.33× to 0.57× the speed).
-- **The transposed convolutions are why.** A profile of the int8 model on 1 thread: `quantized::conv_transpose2d` takes 508 ms of 582 ms (87%, 6 calls), `quantized::conv2d` 58 ms (7 calls), the rest is under 10 ms. In fp32 the 13 convolutions take 182 ms of 198 ms. So the int8 `Conv2d` is fast, but the int8 `ConvTranspose2d` takes 508 ms in total, against at most 182 ms for all 13 convolutions in fp32: roughly 4 to 10 times slower than the fp32 transposed convolutions (⚠ an estimate from the totals; I didn't time the fp32 transposed convolutions separately). The `onednn` backend refuses the layers ("ONEDNN only supports zero output_padding") and `qnnpack` is slower (1.3 s).
+Latencies are medians of 7 runs (the JSON also keeps the minimum), from `export_ptq_p9999.json` and `export_qat_lr3e-5.json`.
+
+- **The model is 4× smaller, but int8 is 2.3× slower than fp32 on this CPU** (2.0× to 2.3× on 4 threads). The other exports, measured on 4 threads only with other jobs running on the machine, are noisier but in the same range (int8 0.35× to 0.47× the speed).
+- **The transposed convolutions are why, and the int8 convolutions don't compensate.** Each layer timed separately on its real input (`python -m src.quantize profile`, QAT model, median of 5):
+
+| 1 thread | fp32 | int8 | int8 / fp32 |
+|---|---|---|---|
+| 6 transposed convolutions | 170 ms | 684 ms | **4.0×** (1.1× to 11.2× per layer) |
+| 7 convolutions | 81 ms | 81 ms | **1.00×** |
+| **total** | 251 ms | 765 ms | 3.0× |
+
+On 4 threads: 3.1× for the transposed convolutions, 0.98× for the convolutions. The worst layer is the last decoder, at full resolution (359 ms alone in int8, 11.2× its fp32 time). So on this CPU, int8 gives no speed-up on the regular convolutions either, and the transposed ones are much slower. The `onednn` backend refuses the layers ("ONEDNN only supports zero output_padding") and `qnnpack` is slower (1.3 s); I didn't rerun those two checks.
 - Krishnamoorthi reports 2× to 3× speed-ups on phone CPUs (abstract, § 6, ResNet and MobileNet models, no transposed convolutions). That is a different CPU and a different layer mix; my result doesn't contradict it.
 - The quantization helps the **size** (and so the memory to load the model), not the speed, for this architecture on this CPU. Making int8 fast would mean changing the decoder (an upsample followed by a convolution, or a sub-pixel formulation), which is a different model and a different experiment.
 
@@ -183,7 +197,7 @@ museval SDR over the 50 test tracks, same protocol as the other experiments. The
 
 ## Limits
 
-- **One checkpoint, one seed.** The ±0.03 dB noise of the QAT curves and the ~0.1 dB seed-to-seed variability of the baseline ([README](../README.md)) bound what I can claim. Differences under ~0.1 dB between settings are not interpretable.
+- **One checkpoint, one seed.** The ±0.03 dB noise of the QAT curves and the rerun noise of the baseline (three trainings with the same seed stay within ±0.15 dB of each other, paired, [06](06_size_quality.md)) bound what I can claim. Differences under ~0.1 dB between settings are not interpretable.
 - **Calibration and QAT use training crops; the learning rate and the range method were chosen on validation crops.** The test set was not used to choose anything.
 - **Only W8A8 has real kernels.** The 6-bit and 4-bit numbers are simulations (there is no int4 kernel here); they show where the cliff is, not a deployable model.
 - **Test-set numbers for PTQ are simulations**; only the QAT model was run with the real kernels on the 50 tracks, and the real kernels differ from the simulation by up to 0.07 dB.
@@ -203,10 +217,12 @@ uv run python -m src.quantize qat $CK --act-range percentile --epochs 10 --lr 3e
 uv run python -m src.quantize evaluate $CK --qat outputs/quant/baseline.qat_p99_lr3e-5_cos.pt -w 2 -o outputs/quant/test_qat.json   # simulation, GPU
 uv run python -m src.quantize evaluate $CK --qat outputs/quant/baseline.qat_p99_lr3e-5_cos.pt --real -w 2 -o outputs/quant/test_qat_real.json   # real int8, CPU
 uv run python -m src.quantize export $CK --qat outputs/quant/baseline.qat_p99_lr3e-5_cos.pt --cpu       # size, latency, simulation vs real
+uv run python -m src.quantize profile $CK --qat outputs/quant/baseline.qat_p99_lr3e-5_cos.pt -o outputs/quant/profile_qat_lr3e-5.json   # per-layer CPU time
 uv run python -m src.quantize qat $CK --no-weights --no-acts --epochs 10 --lr 3e-5 --cosine --tag fp32_ctrl \
     -o outputs/quant/baseline.qat_fp32_ctrl.pt      # control: same fine-tuning, no quantization (evaluate it with --qat)
-uv run python -m analysis.quantization --sweep outputs/quant/sweep_baseline.json --sensitivity outputs/quant/sensitivity_baseline.json \
-    --qat outputs/quant/baseline.qat_p99_lr3e-5_cos.pt
+Q=outputs/quant; uv run python -m analysis.quantization --sweep $Q/sweep_baseline.json --sensitivity $Q/sensitivity_baseline.json \
+    --qat $Q/baseline.qat_p99_lr1e-5_cos.pt --qat $Q/baseline.qat_p99_lr3e-5_cos.pt --qat $Q/baseline.qat_p99_lr1e-4_cos.pt \
+    --qat $Q/baseline.qat_p99_lr3e-4_cos.pt --qat $Q/baseline.qat_minmax_lr1e-4_cos.pt --qat $Q/baseline.qat_fp32_ctrl.pt
 ```
 
 The machine has 8 GB of RAM: with another heavy job running, the QAT can be killed by the out-of-memory killer (it happened to one of my runs, which I reran). The training workers use `spawn` to avoid copying the validation crops.
