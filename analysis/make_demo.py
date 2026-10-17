@@ -173,7 +173,8 @@ def page(args):
             body.append(f"<section><h3>{i['kind'].capitalize()} excerpt <span class=meta>({i['start_s']}–{i['start_s'] + i['seconds']} s; "
                         f"SDR {i['sdr']:+.1f} dB)</span></h3>"
                         f"<div class=players>{audio}</div><img src=\"{slug}/{i['kind']}/spectrogram.jpg\" alt=\"spectrograms of the {i['kind']} excerpt\"></section>")
-    ckpt = html.escape(infos[0]["ckpt"])
+    model = e(args.model) if args.model else f"checkpoint <code>{e(infos[0]['ckpt'])}</code>"
+    note = f"<p>{e(args.note)}</p>" if args.note else ""
     doc = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Voice separation demo</title>
@@ -184,11 +185,12 @@ body{{font:16px/1.5 system-ui,sans-serif;max-width:860px;margin:0 auto;padding:1
 figure{{margin:0}} figcaption{{font-size:.9em}} audio{{width:100%}} img{{max-width:100%;margin-top:8px}} section{{margin:24px 0}}
 </style></head><body>
 <h1>Voice separation demo</h1>
-<p>Excerpts of two test tracks separated by the small stereo U-Net of this project (checkpoint <code>{ckpt}</code>). For each track:
+<p>Excerpts of two test tracks separated by the small stereo U-Net of this project ({model}). For each track:
 the best, a typical and the worst 10 s excerpt, chosen by a fixed rule on the 1 s SDR scores (median over the excerpt), so a good
 passage does not hide a bad one. Passages without vocals are left out (their SDR only measures the noise floor). SDR is the BSSEval v4
 median over the 1 s windows of the excerpt, as in the evaluation.
 The selection uses the ground truth: this describes the model, it is not a blind test.</p>
+{note}
 {''.join(body)}
 <h2>Licence and changes</h2>
 <p>Audio from the MUSDB18 dataset (Rafii et al., 2017), tracks by The Easton Ellises from the heise stems remix competition,
@@ -210,7 +212,9 @@ def main():
     p.add_argument("--format", choices=("mp3", "wav"), default="mp3")
     p.add_argument("--cpu", action="store_true", help="inference on CPU (free VRAM for other jobs)")
     p.add_argument("--unlisted", action="store_true", help="allow a track outside the publishable list (private test, do not commit)")
-    sub.add_parser("page")
+    p = sub.add_parser("page")
+    p.add_argument("--model", default=None, help="description of the model shown on the page (default: the checkpoint path)")
+    p.add_argument("--note", default=None, help="paragraph shown before the excerpts (context, caveats)")
     args = ap.parse_args()
     {"extract": extract, "page": page}[args.cmd](args)
 

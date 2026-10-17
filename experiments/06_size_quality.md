@@ -102,3 +102,7 @@ Validation (`val/si_sdr_median`, mean of the last 10 epochs): w4 2.67, w8 3.17, 
 # PC
 deploy/fetch_results.sh size-v1 --wait
 ```
+
+## Re-run at 1000 epochs
+
+Re-run at 1000 epochs with data augmentation ([11](11_final.md), 3 seeds each): **w32 − w16 = +0.34 dB [+0.25, +0.40] on test**, better on 44/50 tracks (+0.46 dB on validation). On validation the gap grows with training (+0.27 dB at epoch 150, +0.46 at 1000): with augmentation, the extra width is used, it is not a faster start (H2 of [11](11_final.md)). Without augmentation the probe shows the opposite trend (+0.35 → +0.26 dB, one seed, [09](09_convergence_probe.md)). **w32 is the final model**: 5.89 dB median on test, 2.63 GiB peak VRAM on the GTX 1650. w4, w8 and w64 were not re-run.

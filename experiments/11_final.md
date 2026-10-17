@@ -73,3 +73,53 @@ Gap w32 − w16 (augmented, 3 seeds each) along the runs: +0.27 dB at epoch 150,
 4. **Compression in the loss: confirmed, larger than predicted.** −1.278 dB (predicted −0.5 to −1.0): the gap did not close with training, so the 150-epoch loss was not a convergence artefact. The codec-weighting explanation of [05](05_amplitude_compression.md) stays the candidate; the mask histogram (phase 4) can test the other one.
 5. **Head bug: prediction rejected.** +0.125 dB, inconclusive, where I predicted a clear loss. At this budget the network with BN + ReLU before the head is not measurably worse. The cap is sigmoid(b) only when the learned head weights are negative; the 0.727 cap of the old checkpoint is not a property of the architecture. To check on its checkpoint (mask maximum and share of bins at the cap) before writing anything stronger.
 6. **Mono: decided on test** (above).
+
+## Test (phase 5)
+
+Evaluated after the decisions above were committed (`8e54341`): last checkpoint of every run, 50 test tracks, official mixture, stereo museval v4. `uv run python -m analysis.final_test` → `figures/final_test.json`. Each configuration is the per-track mean over its seeds; paired difference against the reference, median [95 % bootstrap CI over tracks], wins out of 50. The CI covers tracks only; the seed medians show the seed spread.
+
+![test comparisons](../figures/final_test.png)
+
+| model (test SDR, official mixture) | median [95 % CI] | seed medians |
+|---|---|---|
+| 150-epoch baseline (w16, no augmentation) | 4.47 [3.54, 5.37] | 4.47 (1 seed) |
+| recipe: w16 + augmentation, 1000 epochs | 5.45 [3.89, 5.95] | 5.54, 5.38, 5.32 |
+| **final: w32 + augmentation, 1000 epochs** | **5.89 [4.29, 6.30]** | 5.72, 5.82, 5.92 |
+| Open-Unmix `umx`, same pipeline, no Wiener | 6.06 [5.32, 7.30] | |
+| Open-Unmix `umx`, same pipeline, Wiener (default) | 6.43 [5.21, 7.24] | |
+
+| change (variant − reference) | validation decision | test: paired Δ [95 % CI] | wins | agrees? |
+|---|---|---|---|---|
+| w32 (3 vs 3 seeds) | +0.46, real | **+0.34 [+0.25, +0.40]** | 44/50 | yes |
+| wSDR loss (3 vs 3) | +0.24, real | **+0.25 [+0.13, +0.32]** | 39/50 | yes |
+| SI-SDR loss (1 vs 3) | −0.69, real | **−0.47 [−0.60, −0.32]** | 5/50 | yes |
+| \|X\|^0.3 in the loss (1 vs 3) | −1.28, real | **−1.00 [−1.21, −0.90]** | 1/50 | yes |
+| head bug (1 vs 3) | +0.13, inconclusive | −0.01 [−0.13, +0.12] | 23/50 | yes (no effect) |
+| **mono input (1 vs 3)** | not comparable | **+0.15 [−0.14, +0.28]**, p = 0.41 | 29/50 | decided here: **inconclusive** |
+| augmentation, constant lr (phase 2) | +0.24 | +0.17 [+0.09, +0.30] | 37/50 | yes |
+| augmentation, wsd (phase 2) | +0.27 | +0.30 [+0.16, +0.36] | 44/50 | yes |
+| end decay, no aug (phase 2) | +0.11 | −0.05 [−0.12, −0.00] | 18/50 | no gain on test either |
+| end decay, aug (phase 2) | +0.14 | +0.04 [−0.00, +0.07] | 31/50 | no gain on test either |
+| recipe vs 150-epoch baseline | | +0.64 [+0.50, +0.71] | 45/50 | |
+| **final w32 vs 150-epoch baseline** | | **+0.99 [+0.88, +1.17]** | 48/50 | |
+| final w32 vs Open-Unmix (Wiener) | | −0.55 [−0.78, −0.33] | 14/50 | |
+| final w32 vs Open-Unmix without Wiener | | −0.27 [−0.51, −0.10] | 14/50 | |
+
+⚠ `recipe-v1/r_const_s44` failed its test evaluation (oracle-cache collision, fixed in `src/models/oracle.py`) and was being re-run when these numbers were written: the `const` cell has 2 seeds on test. Re-run `analysis.final_test` once it is fetched.
+
+- **Every validation decision holds on test**, with the same sign; the sizes shrink a little (w32 +0.46 → +0.34, SI-SDR loss −0.69 → −0.47, compression −1.28 → −1.00), as expected from a selection made on validation. The end decay, not kept on validation, does not gain on test either.
+- **Mono against stereo: no measurable difference**, as at 150 epochs ([02](02_mono_vs_stereo.md)). One mono seed, CI including 0.
+- **The re-run moved the result by about 1 dB**: 4.47 → 5.89 dB, better on 48 of 50 tracks, with the same architecture family, under the same 4 GB budget (w32: 2.63 GiB). The gap to Open-Unmix goes from 1.69 dB to 0.55 dB (0.27 dB against Open-Unmix without its Wiener filter, i.e. with the same kind of reconstruction).
+- The two near-silent tracks (*PR - Happy Daze*, *PR - Oh No*) stay broken for the waveform losses (sisdr −33 and −8.5 dB, wsdr −23 to −30 and −4 to −6 dB, against −14 to −1 and about 0 dB for the reference): the energy-normalised losses still never learn silence. Medians are not affected.
+
+## Checkpoint analyses (phase 4)
+
+On the 240 validation crops, so no test track is involved, except the Wiener filter.
+
+**Head bug** (`uv run python -m analysis.mask_stats ...`, `figures/mask_stats.json`). Head of the 1000-epoch legacy run: weights [[−1.06, +1.48], [−1.07, +1.48]], bias −0.36. Each output channel has one **positive** weight on a ReLU input, so the mask is not capped: it reaches 1.0 and no bin sits at a fixed ceiling (0.0 %), against a cap of 0.727 on 46 % of the bins in the pre-fix checkpoint. The bug is a ceiling only when training happens to make all the head weights of a channel negative; this run did not, which explains why it costs nothing here. The fix stays right (it removes a failure mode), but "the bug cost X dB" cannot be claimed.
+
+**Compressed loss** (same script). Hypothesis of [05](05_amplitude_compression.md): `|X|^0.3` pushes the mask to 0 where the voice is weak. **Rejected**: among the bins where the ideal ratio is between 0.1 and 0.5, the mask is below 0.05 on 6.1 % of them for `power_loss`, against 14.7 % for the reference; it zeroes weak voice *less*. Its mean mask is lower (0.46 against 0.49). The other explanation (the weight the compressed loss gives above 16 kHz, where the codec emptied the spectrum) is untested.
+
+**Output level of the waveform losses** (`analysis.output_scale` on 80 validation crops, `figures/output_scale_1000ep.json`). Median scale cost (what the SNR would gain with the right level): reference 0.14 dB, sisdr 0.11 dB, wsdr 0.06 dB; median optimal gain −0.68, −0.64 and −0.15 dB. The level is not what makes the SI-SDR loss worse (its scale cost is the reference's); the wSDR model has the best-calibrated level, as its scale-sensitive noise term ([04](04_waveform_loss.md)) is meant to give.
+
+**Wiener post-processing of the final model** (`src/evaluate_wiener.py`): see below.

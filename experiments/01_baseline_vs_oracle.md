@@ -90,3 +90,7 @@ Commands: `uv run python -m src.evaluate CKPT --mixture official --no-oracle -o 
 ## For the record: the mono analysis
 
 The same analysis on the original mono model (mono protocol, `outputs/oracle_baseline.json`, figures `baseline_vs_oracle.png` and `baseline_by_genre.png`): SDR 4.70 dB vs oracle 9.21 dB, gap 4.32 dB [4.04, 4.69], Spearman 0.90. Same conclusions. I switched to stereo after [02](02_mono_vs_stereo.md); these numbers aren't used as a reference anywhere else.
+
+## Re-run at 1000 epochs
+
+The controlled rerun of the head bug was done at 1000 epochs with the final recipe ([11](11_final.md)): **−0.01 dB [−0.13, +0.12] on test**, no measurable cost. The trained head has one positive weight per output channel ([[−1.06, +1.48], [−1.07, +1.48]], `analysis.mask_stats`), so the mask is not capped (maximum 1.0, 0 %% of the bins at a fixed ceiling). The 0.727 ceiling above was a property of that checkpoint (all its head weights negative), not of the architecture. The fix stays: it removes the failure mode. The final model ([11](11_final.md)): **5.89 dB** on test (official mixture), against 4.47 dB for this page's baseline and 6.43 dB for Open-Unmix.

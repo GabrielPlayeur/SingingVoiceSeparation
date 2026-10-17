@@ -9,33 +9,44 @@ Data: MUSDB18 (compressed stems), 84 train / 16 validation / 50 test tracks. Met
 
 ## Listen
 
-[Demo page](https://gabrielplayeur.github.io/SingingVoiceSeparation/demo/): two test tracks, with the best, a typical and the worst 10 s excerpt picked by a fixed rule, so a good passage does not hide a bad one.
+[Demo page](https://gabrielplayeur.github.io/SingingVoiceSeparation/demo/): the final model on the only two test tracks whose licence allows publishing them, with the best, a typical and the worst 10 s excerpt picked by a fixed rule. They happen to be the two hardest tracks for it (see the page).
 
 ## Results
 
-![stereo baseline against the ideal-mask oracle](figures/stereo_vs_oracle.png)
+| model (test SDR, official mixture, 50 tracks) | median [95 % CI] | |
+|---|---|---|
+| Baseline: Jansson-style U-Net, 9.8 M parameters, 150 epochs | 4.47 [3.54, 5.37] | starting point |
+| Same U-Net, 1000 epochs, data augmentation | 5.45 [3.89, 5.95] | 3 seeds |
+| **Final: twice as wide (39 M parameters, 2.6 GB of VRAM), 1000 epochs, augmentation** | **5.89 [4.29, 6.30]** | 3 seeds; +0.99 dB over the baseline, better on 48/50 tracks |
+| [Open-Unmix](https://github.com/sigsep/open-unmix-pytorch) `umx`, run through the same pipeline | 6.43 [5.21, 7.24] | published: 6.32 dB |
+| Ideal magnitude mask (oracle), same reconstruction as the U-Net | 9.09 | |
 
-The baseline (9.8 M parameters, stereo) reaches **4.50 dB**. The ideal mask with the same reconstruction reaches 9.09 dB, so the model gets 49 % of what a magnitude mask can give and about 4.6 dB are left in the mask estimate itself, before the mixture phase matters.
+Running Open-Unmix through my evaluation gives back its published score (6.43 against 6.32 dB), so the numbers are on the same scale as the literature for compressed MUSDB18. The final model is 0.55 dB below Open-Unmix (0.27 dB below Open-Unmix without its Wiener filter).
 
-**Calibration.** I ran the pretrained [Open-Unmix](https://github.com/sigsep/open-unmix-pytorch) `umx` through the same pipeline (official mixture, same 50 tracks, stereo museval v4): **6.43 dB** [5.21, 7.24], against 6.32 dB published (Stöter et al., 2019). The pipeline reproduces the published number. My baseline gets 4.47 dB on the same mixture: **1.7 dB below** Open-Unmix (paired median difference +1.69 dB [1.25, 1.90], better on 43 of 50 tracks). With the same reconstruction as my U-Net (magnitude estimate, mixture phase, no Wiener filter) Open-Unmix gets 6.06 dB, so most of the gap is in the network, not in the filtering.
+**The main finding is about the method, not a trick.** My first eight experiments ran for 150 epochs. A long probe ([09](experiments/09_convergence_probe.md)) showed every model was still improving there (+0.6 dB more by epoch 1000), and that it changed conclusions: data augmentation *hurts* at 150 epochs (−0.4 to −0.7 dB on validation) and *helps* at 1000 (+0.25 dB, 3 seeds). So I re-ran what mattered at 1000 epochs, with 3 seeds where a decision depended on it, decided everything on validation and committed the decisions before computing any test number.
 
-| # | Question | At 150 epochs, 1 seed (test SDR, paired difference to the baseline) | At budget B, 3 seeds | Page |
+| # | Question | At 150 epochs, 1 seed (test SDR, paired difference to the baseline) | At 1000 epochs, with augmentation (test, paired difference) | Page |
 |---|---|---|---|---|
 | 1 | How far is the baseline from the oracle? | 4.50 against 9.09 dB; below the oracle on 50 of 50 tracks | | [01](experiments/01_baseline_vs_oracle.md) |
-| 2 | Does stereo input help? | No: +0.04 dB [−0.18, +0.17] | | [02](experiments/02_mono_vs_stereo.md) |
-| 3 | Is the learning rate badly tuned? | No: 1e-3 constant beats the lower rates and cosine by 0.15 to 0.68 dB (validation) | | [03](experiments/03_lr_schedule.md) |
-| 4 | Do waveform losses help? | SI-SDR +0.11 dB and wSDR +0.12 dB, inside the noise; multi-resolution STFT −0.51 dB | | [04](experiments/04_waveform_loss.md) |
-| 5 | Does compressing the magnitude help? | In the loss −0.82 dB; in the input +0.07 dB; per-crop normalisation −0.01 dB | | [05](experiments/05_amplitude_compression.md) |
-| 6 | Is a wider model better? | w4 and w8 −0.85 and −0.81 dB; w32 +0.22 dB; w64 +0.42 dB (over the 4 GB budget) | | [06](experiments/06_size_quality.md) |
-| 7 | Does a longer training context help? | 2.96 s −0.35 dB; 8.90 s 0.00; 11.88 s +0.12 dB | | [07](experiments/07_context_length.md) |
-| 8 | Can the model be stored in int8? | Yes: 4.49 against 4.50 dB, 4× smaller (9.9 MB), but 2.3× slower on my CPU | | [08](experiments/08_int8_quantization.md) |
+| 2 | Does stereo input help? | No: +0.04 dB [−0.18, +0.17] | Still no: stereo − mono −0.15 dB [−0.28, +0.14] (1 mono seed) | [02](experiments/02_mono_vs_stereo.md), [11](experiments/11_final.md) |
+| 3 | Is the learning rate badly tuned? | No: 1e-3 constant beats the lower rates and cosine (validation) | A decay at the end halves the end-of-run noise but gains nothing (+0.04 dB) | [03](experiments/03_lr_schedule.md), [10](experiments/10_recipe.md) |
+| 4 | Do waveform losses help? | SI-SDR +0.11 dB and wSDR +0.12 dB, inside the noise; multi-resolution STFT −0.51 dB | **wSDR +0.25 dB** [+0.13, +0.32] (3 seeds); SI-SDR −0.47 dB | [04](experiments/04_waveform_loss.md), [11](experiments/11_final.md) |
+| 5 | Does compressing the magnitude help? | In the loss −0.82 dB; in the input +0.07 dB | In the loss −1.00 dB: not a convergence effect | [05](experiments/05_amplitude_compression.md), [11](experiments/11_final.md) |
+| 6 | Is a wider model better? | w32 +0.22 dB; w64 +0.42 dB (over the 4 GB budget) | **w32 +0.34 dB** [+0.25, +0.40] (3 seeds); the gap grows with training | [06](experiments/06_size_quality.md), [11](experiments/11_final.md) |
+| 7 | Does a longer training context help? | 2.96 s −0.35 dB; 8.90 s 0.00; 11.88 s +0.12 dB | not re-run (bounded by the 4.4 s receptive field) | [07](experiments/07_context_length.md) |
+| 8 | Can the model be stored in int8? | Yes: 4.49 against 4.50 dB, 4× smaller (9.9 MB), but 2.3× slower on my CPU | not re-run on the final model | [08](experiments/08_int8_quantization.md) |
+| 9 | Does data augmentation help? | (not tested) | **+0.17 to +0.30 dB** (3 seeds per cell); −0.4 to −0.7 dB at 150 epochs | [09](experiments/09_convergence_probe.md), [10](experiments/10_recipe.md) |
+| 10 | Was the head bug costly? | (no clean measurement) | No: −0.01 dB; the trained head learned around it | [01](experiments/01_baseline_vs_oracle.md), [11](experiments/11_final.md) |
 
-I expected the waveform losses to gain 0.3 to 1 dB and got 0.1. I expected compressing the magnitudes to help, as it does in speech enhancement; in the loss it cost 0.8 dB. Width is the only lever that beat the noise.
+![each change against its reference, test](figures/final_test.png)
+
+All the validation decisions held on test, with the same sign. Training length, augmentation and width did most of the work; of the ideas borrowed from speech papers, only the weighted-SDR loss helped, and compressing magnitudes in the loss hurt by 1 dB.
 
 **Caveats.**
-- All 150-epoch runs stop while the validation score is still rising, so those comparisons also measure how fast a model converges. I am re-running them at a longer budget B, with data augmentation and three seeds, decided on validation only. The B column is empty until that is done.
-- One run moves by about 0.3 dB between two trainings of the same baseline; paired differences stay within ±0.15 dB. That is the yardstick for the 150-epoch column.
-- The table below builds the mixture as vocals plus accompaniment (4.50 dB for the baseline; 4.47 dB with the official mixture, the protocol of the calibration above). Absolute numbers are comparable with published ones only for compressed MUSDB18, not for HQ.
+- The seed-to-seed spread is 0.09 dB on the validation score (3 seeds × 4 configurations). One-seed rows need a difference of about 0.2 dB to mean anything; the CIs above only cover track-to-track variability.
+- The 150-epoch column builds the mixture as vocals plus accompaniment; the 1000-epoch column and the first table use the official mixture. The two differ by 0.03 dB on the baseline (4.50 against 4.47 dB).
+- wSDR and width 32 were each tested against the w16 recipe, not together: the final model uses the L1 loss.
+- Compressed MUSDB18, not HQ: only comparable with results on the same version.
 
 <!-- AUTHOR: conclusion to write once the B column is filled. -->
 

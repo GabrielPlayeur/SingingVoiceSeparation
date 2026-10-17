@@ -84,3 +84,7 @@ A W&B id is the folder name in `outputs/VoiceSeparation/<id>/`. A server run tha
 
 - I. Loshchilov, F. Hutter, *SGDR: Stochastic Gradient Descent with Warm Restarts*, ICLR 2017, [arXiv:1608.03983](https://arxiv.org/abs/1608.03983). Read for equation 5 and the experimental setup.
 - LR values of the other papers: Braun & Tashev, Wilson et al. ([05](05_amplitude_compression.md#references)), Yamamoto et al., Choi et al. ([04](04_waveform_loss.md#references)), read in their training sections.
+
+## Re-run at 1000 epochs
+
+At 1000 epochs ([10](10_recipe.md), 3 seeds per cell), a constant rate with a linear decay to 0 over the last 20 % (`wsd`, not the cosine of this page) gains +0.13 dB on validation, below the decision threshold (0.15 dB), and +0.04 / −0.05 dB on test. It does halve the noise of the last epochs (0.04 against 0.09–0.10 dB). The constant 1e-3 stays.

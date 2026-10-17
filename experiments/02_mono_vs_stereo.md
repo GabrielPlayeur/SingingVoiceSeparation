@@ -67,3 +67,7 @@ uv run python -m src.train data.channels=1
 # both files store the two protocols; `sdr` alone is each model's own protocol, so compare on the same key:
 uv run python -m analysis.compare_runs outputs/eval_mono.json outputs/eval_stereo.json --names mono stereo --metric sdr_stereo --exclude "PR -"
 ```
+
+## Re-run at 1000 epochs
+
+Re-run with the final recipe (1000 epochs, data augmentation; [11](11_final.md)). The mono model cannot be compared on validation (its validation crops are downmixed, which alone moves the oracle by +0.93 dB), so it was decided on test under the stereo protocol: stereo − mono **−0.15 dB [−0.28, +0.14]**, p = 0.41, one mono seed against three stereo seeds. Same conclusion as at 150 epochs: no measurable effect of the stereo input.

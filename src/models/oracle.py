@@ -102,7 +102,9 @@ class OracleCache:
             return
         self.tracks[track_name] = {k: result[k] for k in self.FIELDS}
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        tmp = self.path + ".tmp"
+        # one temporary file per process: parallel evaluations filling the same cache used to collide on a shared ".tmp" name
+        # (os.replace of a file another process had already moved: FileNotFoundError, recipe-v1/r_const_s44). os.replace stays atomic.
+        tmp = f"{self.path}.{os.getpid()}.tmp"
         with open(tmp, "w") as f:
             json.dump({"meta": self.meta, "tracks": self.tracks}, f, indent=1)
         os.replace(tmp, self.path)

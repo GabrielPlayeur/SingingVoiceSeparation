@@ -133,3 +133,7 @@ Training time on the server (4 runs sharing one A800): 24.2 to 24.7 min each, ab
 
 - S. Braun, I. Tashev, *A consolidated view of loss functions for supervised deep learning-based speech enhancement*, [arXiv:2009.12286](https://arxiv.org/abs/2009.12286), 2020. Read in full. The arXiv page doesn't give a venue; to check before citing elsewhere.
 - K. Wilson, M. Chinen, J. Thorpe, B. Patton, J. Hershey, R. F. Saurous, J. Skoglund, R. F. Lyon, *Exploring Tradeoffs in Models for Low-latency Speech Enhancement*, [arXiv:1811.07030](https://arxiv.org/abs/1811.07030), 2018. Read in full. Same remark about the venue.
+
+## Re-run at 1000 epochs
+
+Re-run at 1000 epochs with data augmentation ([11](11_final.md)): `|X|^0.3` in the loss costs **−1.00 dB [−1.21, −0.90]** on test (1 seed, better on 1/50 tracks), −1.28 dB on validation. The gap did not close with training, so it was not a convergence artefact. The "mask pushed to zero" explanation is **rejected**: on validation, the mask is below 0.05 on 6.1 % of the weak-voice bins against 14.7 % for the reference (`analysis.mask_stats`). The weighting of the codec-emptied band above 16 kHz remains the untested candidate. `power_in` and `norm` were not re-run.

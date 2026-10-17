@@ -127,3 +127,7 @@ uv run python -m analysis.output_scale --ckpt baseline=<baseline ckpt> --ckpt si
 - J. Le Roux, S. Wisdom, H. Erdogan, J. R. Hershey, *SDR – half-baked or well done?*, [arXiv:1811.02508](https://arxiv.org/abs/1811.02508), 2018. Read in full. The arXiv page doesn't give the venue (ICASSP 2019 from memory, not checked).
 - H.-S. Choi, J.-H. Kim, J. Huh, A. Kim, J.-W. Ha, K. Lee, *Phase-aware Speech Enhancement with Deep Complex U-Net*, ICLR 2019, [arXiv:1903.03107](https://arxiv.org/abs/1903.03107). Read in full.
 - R. Yamamoto, E. Song, J.-M. Kim, *Parallel WaveGAN: a fast waveform generation model based on generative adversarial networks with multi-resolution spectrogram*, ICASSP 2020, [arXiv:1910.11480](https://arxiv.org/abs/1910.11480). Read the multi-resolution loss section and table 1.
+
+## Re-run at 1000 epochs
+
+Re-run at 1000 epochs with data augmentation ([11](11_final.md)). **wSDR: +0.25 dB [+0.13, +0.32] on test** (3 seeds against 3, better on 39/50 tracks; +0.24 dB on validation): the candidate of this page is confirmed once the models are trained to their plateau. **SI-SDR: −0.47 dB [−0.60, −0.32]** (1 seed), below the reference even on its own training metric; its output level is not the cause (scale cost 0.11 dB against 0.14 dB for the reference, `figures/output_scale_1000ep.json`). Both still collapse on *PR - Happy Daze*. The multi-resolution STFT loss was not re-run (it failed by instability). wSDR was not tested together with width 32.

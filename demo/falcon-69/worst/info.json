@@ -5,11 +5,11 @@
   "kind": "worst",
   "start_s": 40,
   "seconds": 10,
-  "sdr": 0.44118793383631966,
-  "sir": 16.579646113832233,
-  "sar": 0.11016018038337108,
-  "track_sdr": 3.61124831527279,
-  "ckpt": "outputs/VoiceSeparation/fgvzjxua/checkpoints/baseline-stereo.ckpt",
+  "sdr": 1.0651209664776085,
+  "sir": 15.885503684065078,
+  "sar": 0.1307070304293007,
+  "track_sdr": 3.4921732501211933,
+  "ckpt": "outputs/VoiceSeparation/zebu9zkb/checkpoints/best_slim.ckpt",
   "format": "mp3",
   "gain": 1.0
 }
