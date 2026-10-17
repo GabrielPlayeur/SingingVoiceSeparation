@@ -37,6 +37,7 @@ if [ -f "$_ENV_DIR/env.local.sh" ]; then source "$_ENV_DIR/env.local.sh"; fi
 # KEEP_ZIP=1 to keep the zip (4.7 GB) after extraction; deleted by default (50 GB data disk)
 : "${DATASET_URL:=https://zenodo.org/records/1117372/files/musdb18.zip}"   # TODO: check the URL (compressed MUSDB18, ~4.7 GB)
 : "${HF_REPO:=}"                    # data relay: user/name of a PRIVATE Hugging Face dataset repository (hf_upload.sh / get_data_hf.sh)
+: "${HF_CKPT_REPO:=}"               # checkpoint relay: PRIVATE Hugging Face model repository (push_ckpt_hf.sh / get_ckpt_hf.sh); empty = <user of HF_REPO>/svs-checkpoints
 : "${LOCAL_RESULTS_DIR:=}"        # empty = <repo>/outputs/server
 
 # ---- AutoDL-specific: to check in the AutoDL docs before buying ------------------------------------------------------
@@ -61,6 +62,6 @@ if [ -f "$_ENV_DIR/env.local.sh" ]; then source "$_ENV_DIR/env.local.sh"; fi
 : "${WANDB_MODE:=offline}"        # offline | online (online needs WANDB_API_KEY in the environment)
 : "${SHUTDOWN_WAIT_MIN:=180}"     # run_queue.py --shutdown: max wait for the FETCHED file before giving up the shutdown
 
-export HF_REPO SSH_HOST SSH_PORT SSH_USER SSH_KEY REPO_URL GIT_TAG DATA_ROOT SERVER_REPO BOOTSTRAP_DIR MUSDB_RAW MUSDB_PROCESSED SPLIT_PATH \
+export HF_REPO HF_CKPT_REPO SSH_HOST SSH_PORT SSH_USER SSH_KEY REPO_URL GIT_TAG DATA_ROOT SERVER_REPO BOOTSTRAP_DIR MUSDB_RAW MUSDB_PROCESSED SPLIT_PATH \
        ORACLE_CACHE_DIR RUNS_DIR DOWNLOAD_DIR LOCAL_MUSDB DATASET_URL LOCAL_RESULTS_DIR NET_TURBO_FILE SHUTDOWN_CMD CPU_CORES \
        UV_INSTALL_CMD PYPI_MIRROR TORCH_INDEX TORCH_WHEELS_URL DEFAULT_PARALLEL WANDB_MODE SHUTDOWN_WAIT_MIN
