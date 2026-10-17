@@ -96,16 +96,16 @@ Evaluated after the decisions above were committed (`8e54341`): last checkpoint 
 | \|X\|^0.3 in the loss (1 vs 3) | −1.28, real | **−1.00 [−1.21, −0.90]** | 1/50 | yes |
 | head bug (1 vs 3) | +0.13, inconclusive | −0.01 [−0.13, +0.12] | 23/50 | yes (no effect) |
 | **mono input (1 vs 3)** | not comparable | **+0.15 [−0.14, +0.28]**, p = 0.41 | 29/50 | decided here: **inconclusive** |
-| augmentation, constant lr (phase 2) | +0.24 | +0.17 [+0.09, +0.30] | 37/50 | yes |
+| augmentation, constant lr (phase 2) | +0.24 | +0.19 [+0.12, +0.30] | 39/50 | yes |
 | augmentation, wsd (phase 2) | +0.27 | +0.30 [+0.16, +0.36] | 44/50 | yes |
-| end decay, no aug (phase 2) | +0.11 | −0.05 [−0.12, −0.00] | 18/50 | no gain on test either |
+| end decay, no aug (phase 2) | +0.11 | −0.01 [−0.05, +0.05] | 24/50 | no gain on test either |
 | end decay, aug (phase 2) | +0.14 | +0.04 [−0.00, +0.07] | 31/50 | no gain on test either |
 | recipe vs 150-epoch baseline | | +0.64 [+0.50, +0.71] | 45/50 | |
 | **final w32 vs 150-epoch baseline** | | **+0.99 [+0.88, +1.17]** | 48/50 | |
 | final w32 vs Open-Unmix (Wiener) | | −0.55 [−0.78, −0.33] | 14/50 | |
 | final w32 vs Open-Unmix without Wiener | | −0.27 [−0.51, −0.10] | 14/50 | |
 
-⚠ `recipe-v1/r_const_s44` failed its test evaluation (oracle-cache collision, fixed in `src/models/oracle.py`) and was being re-run when these numbers were written: the `const` cell has 2 seeds on test. Re-run `analysis.final_test` once it is fetched.
+`recipe-v1/r_const_s44` first failed its test evaluation (two parallel evaluations collided on the oracle cache's temporary file; fixed in `src/models/oracle.py`) and was re-run alone; all cells have their 3 seeds on test.
 
 - **Every validation decision holds on test**, with the same sign; the sizes shrink a little (w32 +0.46 → +0.34, SI-SDR loss −0.69 → −0.47, compression −1.28 → −1.00), as expected from a selection made on validation. The end decay, not kept on validation, does not gain on test either.
 - **Mono against stereo: no measurable difference**, as at 150 epochs ([02](02_mono_vs_stereo.md)). One mono seed, CI including 0.
@@ -124,4 +124,4 @@ On the 240 validation crops, so no test track is involved, except the Wiener fil
 
 **Wiener post-processing of the final model** (`src/evaluate_wiener.py`): see below.
 
-**Wiener filter on the final model: preliminary, 30 of 50 tracks.** `src/evaluate_wiener.py` applies one EM iteration of Open-Unmix's multichannel Wiener filter inside each 5.93 s inference window, with the two source models |V| = m·|X| and |A| = (1 − m)·|X| from the U-Net mask. On the 30 tracks evaluated so far (seed 42 of w32, official mixture): paired difference **−0.08 dB [−0.20, −0.02]**, better on 9 of 30 tracks; median SIR 9.6 → 10.7 dB, SAR 1.9 → 2.0 dB. So the filter does not reproduce the +0.16 dB it brings to Open-Unmix: it removes a little more accompaniment and the SDR does not follow. A plausible reason (⚠ untested): with only two sources, the accompaniment model is the exact complement of the vocals model, so the filter has no independent estimate to arbitrate between, unlike the four independent targets of Open-Unmix. The run is incomplete because the 7 GB development machine runs out of memory on the longest test tracks, and one track (*Punkdisco - Oral Hygiene*) gave a NaN estimate (bins where both source models are 0; a floor of 1e-8 was added afterwards). To be re-run on the server, on all 50 tracks, before stating more than "no gain".
+**Wiener filter on the final model.** `src/evaluate_wiener.py` applies one EM iteration of Open-Unmix's multichannel Wiener filter (`softmask=False`, its default) inside each 5.93 s inference window, with the two source models |V| = m·|X| and |A| = (1 − m)·|X| from the U-Net mask. Seed 42 of w32, official mixture, run on the server (`outputs/w32_wiener.json`): paired difference **−0.12 dB [−0.20, −0.05]**, p = 6e-4, better on 13 of 49 tracks; median SIR 9.2 → 10.3 dB, SAR 2.0 → 2.2 dB. The filter removes a little more accompaniment and the SDR goes down: it does **not** reproduce the +0.16 dB it brings to Open-Unmix. A plausible reason (⚠ untested): with two sources the accompaniment model is the exact complement of the vocals model, so the filter has no independent estimate to arbitrate between, unlike the four independent targets of Open-Unmix. One track (*Punkdisco - Oral Hygiene*) gives a NaN estimate with the filter, even with a 1e-8 floor on the source models; it is excluded from this comparison (49 tracks) and the cause is not found. The development machine (7 GB) ran out of memory on the longest tracks, hence the server run.

@@ -87,4 +87,4 @@ A W&B id is the folder name in `outputs/VoiceSeparation/<id>/`. A server run tha
 
 ## Re-run at 1000 epochs
 
-At 1000 epochs ([10](10_recipe.md), 3 seeds per cell), a constant rate with a linear decay to 0 over the last 20 % (`wsd`, not the cosine of this page) gains +0.13 dB on validation, below the decision threshold (0.15 dB), and +0.04 / −0.05 dB on test. It does halve the noise of the last epochs (0.04 against 0.09–0.10 dB). The constant 1e-3 stays.
+At 1000 epochs ([10](10_recipe.md), 3 seeds per cell), a constant rate with a linear decay to 0 over the last 20 % (`wsd`, not the cosine of this page) gains +0.13 dB on validation, below the decision threshold (0.15 dB), and +0.04 / −0.01 dB on test. It does halve the noise of the last epochs (0.04 against 0.09–0.10 dB). The constant 1e-3 stays.

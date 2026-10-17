@@ -21,7 +21,7 @@ Data: MUSDB18 (compressed stems), 84 train / 16 validation / 50 test tracks. Met
 | [Open-Unmix](https://github.com/sigsep/open-unmix-pytorch) `umx`, run through the same pipeline | 6.43 [5.21, 7.24] | published: 6.32 dB |
 | Ideal magnitude mask (oracle), same reconstruction as the U-Net | 9.09 | |
 
-Running Open-Unmix through my evaluation gives back its published score (6.43 against 6.32 dB), so the numbers are on the same scale as the literature for compressed MUSDB18. The final model is 0.55 dB below Open-Unmix (0.27 dB below Open-Unmix without its Wiener filter).
+Running Open-Unmix through my evaluation gives back its published score (6.43 against 6.32 dB), so the numbers are on the same scale as the literature for compressed MUSDB18. The final model is 0.55 dB below Open-Unmix (0.27 dB below Open-Unmix without its Wiener filter). Adding the same kind of Wiener filter to my model does not close that gap: −0.12 dB [−0.20, −0.05] (49 tracks, [11](experiments/11_final.md)).
 
 **The main finding is about the method, not a trick.** My first eight experiments ran for 150 epochs. A long probe ([09](experiments/09_convergence_probe.md)) showed every model was still improving there (+0.6 dB more by epoch 1000), and that it changed conclusions: data augmentation *hurts* at 150 epochs (−0.4 to −0.7 dB on validation) and *helps* at 1000 (+0.25 dB, 3 seeds). So I re-ran what mattered at 1000 epochs, with 3 seeds where a decision depended on it, decided everything on validation and committed the decisions before computing any test number.
 
@@ -35,7 +35,7 @@ Running Open-Unmix through my evaluation gives back its published score (6.43 ag
 | 6 | Is a wider model better? | w32 +0.22 dB; w64 +0.42 dB (over the 4 GB budget) | **w32 +0.34 dB** [+0.25, +0.40] (3 seeds); the gap grows with training | [06](experiments/06_size_quality.md), [11](experiments/11_final.md) |
 | 7 | Does a longer training context help? | 2.96 s −0.35 dB; 8.90 s 0.00; 11.88 s +0.12 dB | not re-run (bounded by the 4.4 s receptive field) | [07](experiments/07_context_length.md) |
 | 8 | Can the model be stored in int8? | Yes: 4.49 against 4.50 dB, 4× smaller (9.9 MB), but 2.3× slower on my CPU | not re-run on the final model | [08](experiments/08_int8_quantization.md) |
-| 9 | Does data augmentation help? | (not tested) | **+0.17 to +0.30 dB** (3 seeds per cell); −0.4 to −0.7 dB at 150 epochs | [09](experiments/09_convergence_probe.md), [10](experiments/10_recipe.md) |
+| 9 | Does data augmentation help? | (not tested) | **+0.19 to +0.30 dB** (3 seeds per cell); −0.4 to −0.7 dB at 150 epochs | [09](experiments/09_convergence_probe.md), [10](experiments/10_recipe.md) |
 | 10 | Was the head bug costly? | (no clean measurement) | No: −0.01 dB; the trained head learned around it | [01](experiments/01_baseline_vs_oracle.md), [11](experiments/11_final.md) |
 
 ![each change against its reference, test](figures/final_test.png)
@@ -56,10 +56,12 @@ Environment with [uv](https://github.com/astral-sh/uv), configs with Hydra, logs
 
 ```bash
 uv sync
-uv run python -m src.train experiment=stereo                    # baseline
+uv run python -m src.train experiment=stereo                    # 150-epoch baseline
+uv run python -m src.train experiment=recipe model.base_channels=32   # final model: w32, 1000 epochs, augmentation (2.6 GiB of VRAM)
 uv run python -m src.evaluate CKPT -o outputs/eval_stereo.json  # test set, stereo museval SDR
 uv run --with openunmix --with torchaudio==2.10.0 python -m src.evaluate_umx --niter 1 -o outputs/umx_niter1.json   # calibration
 uv run python -m analysis.make_demo extract CKPT musdb18/processed/test/<track>   # demo excerpts
+uv run python -m analysis.final_test                            # every test comparison of the re-run (figures/final_test.*)
 ```
 
 Each experiment page lists its own commands and the script that makes its figure. Server runs go through `deploy/run_queue.py`, one group of [deploy/queue.yaml](deploy/queue.yaml) at a time.
