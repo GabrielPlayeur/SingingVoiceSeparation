@@ -2,16 +2,16 @@
 
 Two steps:
   extract CKPT TRACK_DIR   separates the WHOLE track (same inference as src.evaluate: 5.93 s crops, 50 % overlap, official mixture),
-                           scores every 1 s window (BSSEval v4, the statistic of the evaluation) and writes three 10 s excerpts
-                           chosen by RULE, not by ear: `best`, `typical` and `worst`.
+                           scores every 1 s window (BSSEval v4, the statistic of the evaluation) and writes two 10 s excerpts
+                           chosen by RULE, not by ear: `best` and `worst`.
   page                     rebuilds demo/index.html from the demo/*/*/info.json files.
 
 Excerpt rule (so that a good passage does not hide a bad one): candidate excerpts are the 10 s windows starting every 5 s with at
 least 8 finite 1 s SDRs AND at least 8 one-second windows with vocals (RMS within 40 dB of the track's 90th percentile; the
 -40 dB is my choice, not sourced). The vocal filter was added after a first run whose `worst` excerpt was a near-silent
 vocal passage (SDR -15 dB on a reference at the noise floor: a metric artefact, not an audible failure); the score of a candidate is the median of its 1 s SDRs (the
-evaluation's statistic restricted to the excerpt). `best` = highest score, `worst` = lowest, `typical` = closest to the median of
-all candidates. The choice looks at the ground truth: it is a description of the model, not a blind test.
+evaluation's statistic restricted to the excerpt). `best` = highest score, `worst` = lowest. A
+`typical` excerpt (closest to the median) was dropped from the page: three excerpts per track made it too long to listen to. The choice looks at the ground truth: it is a description of the model, not a blind test.
 
 Only tracks whose licence allows sharing may be published (MUSDB18 README: CC BY-NC-SA 3.0 for the two Easton Ellises tracks of
 the test set, the others are "Restricted"). Files of an excerpt (demo/<track>/<kind>/): mix, voice_est, voice_true, accomp_est
@@ -39,7 +39,7 @@ SECONDS = 10         # excerpt length
 HOP_S = 5            # candidate excerpts start every 5 s
 MIN_FINITE = 8       # of the 10 one-second SDRs, and of the 10 one-second windows with vocals
 ACTIVE_DB = -40      # a 1 s window has vocals if its RMS is within 40 dB of the track's 90th percentile (see window_scores)
-KINDS = ("best", "typical", "worst")
+KINDS = ("best", "worst")
 FILES = ("mix", "voice_est", "voice_true", "accomp_est")
 LICENCE = "https://creativecommons.org/licenses/by-nc-sa/3.0/"
 TRACKS = {  # tracks allowed for publication: name -> (slug, attribution)
@@ -66,10 +66,9 @@ def window_scores(sdr, active, seconds=SECONDS, hop=HOP_S, min_finite=MIN_FINITE
 
 
 def pick(cands):
-    """{'best', 'typical', 'worst'} -> (start_s, score), by the rule of the docstring."""
+    """{'best', 'worst'} -> (start_s, score), by the rule of the docstring."""
     scores = np.array([s for _, s in cands])
-    return {"best": cands[int(scores.argmax())], "worst": cands[int(scores.argmin())],
-            "typical": cands[int(np.abs(scores - np.median(scores)).argmin())]}
+    return {"best": cands[int(scores.argmax())], "worst": cands[int(scores.argmin())]}
 
 
 def encode(path_wo_ext, x, sr, fmt):
@@ -186,7 +185,7 @@ figure{{margin:0}} figcaption{{font-size:.9em}} audio{{width:100%}} img{{max-wid
 </style></head><body>
 <h1>Voice separation demo</h1>
 <p>Excerpts of two test tracks separated by the small stereo U-Net of this project ({model}). For each track:
-the best, a typical and the worst 10 s excerpt, chosen by a fixed rule on the 1 s SDR scores (median over the excerpt), so a good
+the best and the worst 10 s excerpt, chosen by a fixed rule on the 1 s SDR scores (median over the excerpt), so a good
 passage does not hide a bad one. Passages without vocals are left out (their SDR only measures the noise floor). SDR is the BSSEval v4
 median over the 1 s windows of the excerpt, as in the evaluation.
 The selection uses the ground truth: this describes the model, it is not a blind test.</p>

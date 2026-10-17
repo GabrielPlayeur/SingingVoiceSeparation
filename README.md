@@ -10,7 +10,7 @@ Metric: stereo museval SDR, median over the 50 test tracks, with 95 % bootstrap 
 
 ## Listen
 
-[Demo page](https://gabrielplayeur.github.io/SingingVoiceSeparation/demo/): the final model on the only two test tracks whose licence allows publishing them, with the best, a typical and the worst 10 s excerpt picked by a fixed rule. They happen to be the two hardest tracks for it (see the page).
+[Demo page](https://gabrielplayeur.github.io/SingingVoiceSeparation/demo/): the final model on the only two test tracks whose licence allows publishing them, with the best and the worst 10 s excerpt picked by a fixed rule. They happen to be the two hardest tracks for it (see the page).
 
 ## Results
 
