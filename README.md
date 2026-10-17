@@ -1,11 +1,12 @@
 # Singing voice separation with a small U-Net
 
 <!-- AUTHOR: rewrite this introduction in your own words (what you wanted to find out, what surprised you). The text below is a draft. -->
-I reimplemented the U-Net of [Jansson et al. (ISMIR 2017)](https://archives.ismir.net/ismir2017/paper/000171.pdf) to separate the voice from the accompaniment, then used it as a testbed: take an idea from a more recent paper, say what I expect it to change, test it against a fixed baseline, and keep the negative results.
+I reimplemented the U-Net of [Jansson et al. (ISMIR 2017)](https://archives.ismir.net/ismir2017/paper/000171.pdf) to separate the voice from the accompaniment, then used it as a testbed to take an idea from a more recent paper. 
 
-**The constraint is my laptop GPU (GTX 1650 Max-Q, 4 GB of VRAM).** Every model has to fit in it. The question is what a model that small can get out of the ideas of the last years.
+**The constraint is my laptop GPU (GTX 1650 Max-Q, 4 GB of VRAM).** Every model has to fit in it. The question is what a model that small can get out of the ideas of the last years and see how new techniques and tricks can improve the output of the model.
 
-Data: MUSDB18 (compressed stems), 84 train / 16 validation / 50 test tracks. Metric: stereo museval SDR, median over the 50 test tracks, with 95 % bootstrap intervals over tracks.
+Data: MUSDB18 (compressed stems), 84 train / 16 validation / 50 test tracks.\
+Metric: stereo museval SDR, median over the 50 test tracks, with 95 % bootstrap intervals over tracks.
 
 ## Listen
 
@@ -21,9 +22,9 @@ Data: MUSDB18 (compressed stems), 84 train / 16 validation / 50 test tracks. Met
 | [Open-Unmix](https://github.com/sigsep/open-unmix-pytorch) `umx`, run through the same pipeline | 6.43 [5.21, 7.24] | published: 6.32 dB |
 | Ideal magnitude mask (oracle), same reconstruction as the U-Net | 9.09 | |
 
-Running Open-Unmix through my evaluation gives back its published score (6.43 against 6.32 dB), so the numbers are on the same scale as the literature for compressed MUSDB18. The final model is 0.55 dB below Open-Unmix (0.27 dB below Open-Unmix without its Wiener filter). Adding the same kind of Wiener filter to my model does not close that gap: −0.12 dB [−0.20, −0.05] (49 tracks, [11](experiments/11_final.md)).
+Running Open-Unmix through my evaluation gives back its published score (6.43 against 6.32 dB), so the numbers are on the same scale as the literature for compressed MUSDB18 and can give us a comparaison point for the final model resultat that is 0.55 dB below Open-Unmix.
 
-**The main finding is about the method, not a trick.** My first eight experiments ran for 150 epochs. A long probe ([09](experiments/09_convergence_probe.md)) showed every model was still improving there (+0.6 dB more by epoch 1000), and that it changed conclusions: data augmentation *hurts* at 150 epochs (−0.4 to −0.7 dB on validation) and *helps* at 1000 (+0.25 dB, 3 seeds). So I re-ran what mattered at 1000 epochs, with 3 seeds where a decision depended on it, decided everything on validation and committed the decisions before computing any test number.
+**The main finding is about the method, not a trick.** My first eight experiments ran for 150 epochs. A long probe ([09](experiments/09_convergence_probe.md)) showed every model was still improving there (+0.6 dB more by epoch 1000), so I re-ran what mattered at 1000 epochs, with 3 seeds where a decision depended on it.
 
 | # | Question | At 150 epochs, 1 seed (test SDR, paired difference to the baseline) | At 1000 epochs, with augmentation (test, paired difference) | Page |
 |---|---|---|---|---|

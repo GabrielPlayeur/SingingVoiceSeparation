@@ -2,72 +2,60 @@
 
 [← back to README](../README.md)
 
-**Hypothesis.** In most mixes the voice sits in the centre while instruments are spread across the stereo field. Giving the model both channels instead of the mono downmix should let it use that spatial cue and separate better.
+**In short.** The voice is more centred than the accompaniment, so I expected stereo input to help. It doesn't, measurably: +0.04 dB at 150 epochs, and still inconclusive at 1000 epochs (stereo − mono −0.15 dB [−0.28, +0.14]). I kept stereo, the standard protocol.
 
-**Status.** Done, one seed. Result: no measurable effect. The 3-seed runs (`seeds` group in [deploy/queue.yaml](../deploy/queue.yaml)) are needed before I can really claim "stereo brings nothing".
+## Hypothesis
+
+In most mixes the voice sits in the centre and the instruments are spread out. With both channels instead of the mono downmix, the model could use that cue.
 
 ## Is the cue really there?
 
-`uv run python -m analysis.stereo_analysis`. I split each stem into Mid = (L+R)/2 (exactly the mono signal of the pipeline) and Side = (L−R)/2. A centred source has a Side close to zero.
+I split each stem into Mid = (L+R)/2 (the mono signal of the pipeline) and Side = (L−R)/2. A centred source has almost no Side.
 
 ![stereo spectrograms](../figures/stereo_spectrograms.png)
 
-On the 94 train/val tracks with an audible voice (central 20 s window):
-
 ![stereo statistics](../figures/stereo_statistics.png)
 
-| | vocals | accompaniment |
+| 94 train/val tracks, central 20 s | vocals | accompaniment |
 |---|---|---|
 | median L/R correlation | 0.94 | 0.84 |
-| energy in Side (median) | 3.0% | 8.4% |
-| median Side/Mid | −15.1 dB | −10.4 dB |
-| median Side/Mid between 400 Hz and 12.8 kHz | −15 to −19 dB | −6 to −7 dB |
-| near-mono tracks (correlation > 0.95) | 48% | 12% |
+| energy in Side | 3.0 % | 8.4 % |
+| Side/Mid between 400 Hz and 12.8 kHz | −15 to −19 dB | −6 to −7 dB |
+| near-mono tracks (correlation > 0.95) | 48 % | 12 % |
 
-The premise holds as a trend: the voice is more centred than the accompaniment on 72% of tracks, with **9 to 12 dB less stereo width** between 400 Hz and 12.8 kHz, where most of the voice is. Below 100 Hz both are centred (bass, kick), so stereo can't help there. But it's not a rule: 52% of voices have a correlation below 0.95 (10th percentile at 0.64: stereo reverb, double-tracking), and 12% of accompaniments are near-mono. So the model has a useful but noisy cue to learn, not a "keep the centre" filter to apply.
+The cue exists as a trend: the voice is narrower than the accompaniment on 72 % of tracks, by 9 to 12 dB in the voice's band. But it's noisy: half of the voices are not near-mono (stereo reverb, double-tracking).
 
-## Protocol
+## Setup
 
-Same everything except `data.channels` (1 → 2): the stereo model takes 2 magnitude channels and outputs 2 masks. Both models are evaluated on the 50 test tracks under two protocols:
-- **mono:** references and estimate downmixed to mono;
-- **stereo:** 2 channels; the mono model is applied separately to L and R.
+Only `data.channels` changes (1 → 2). I score both models under the stereo protocol; the mono model is applied to L and R separately.
 
-My first comparison put the mono model under the mono protocol against the stereo model under the stereo protocol (4.70 vs 4.50 dB), which looked like a 0.2 dB loss. That was mostly a protocol effect: the same mono model drops from 4.70 to 4.51 dB when scored in stereo.
+My first comparison was wrong: mono model under the mono protocol (4.70 dB) against stereo model under the stereo protocol (4.50 dB). It looked like a 0.2 dB loss, but the same mono model drops to 4.51 dB when scored in stereo. It was a protocol effect.
 
-## Results
+## Results (150 epochs)
 
-| SDR median [95% bootstrap CI] | mono model | stereo model | paired difference stereo − mono |
+| SDR median [95 % CI] | mono model | stereo model | stereo − mono, paired |
 |---|---|---|---|
-| mono protocol | 4.70 dB [3.80, 5.92] | 4.89 dB [3.78, 5.70] | −0.06 dB [−0.35, +0.18], p = 0.44 |
-| stereo protocol | 4.51 dB [3.52, 5.47] | 4.50 dB [3.56, 5.38] | +0.04 dB [−0.18, +0.17], p = 0.89 |
-| SI-SDRi, stereo protocol | 9.29 dB | 9.31 dB | +0.03 dB [−0.13, +0.31], p = 0.45 |
-| oracle SDR (mono / stereo protocol) | 9.21 / 9.09 dB | | |
+| mono protocol | 4.70 dB | 4.89 dB | −0.06 dB [−0.35, +0.18], p = 0.44 |
+| stereo protocol | 4.51 dB | 4.50 dB | +0.04 dB [−0.18, +0.17], p = 0.89 |
 
-(The median of paired differences isn't the difference of medians, which is why the mono-protocol row can show a higher median for stereo and a negative paired difference.)
+The mono-protocol row shows a higher median for stereo but a negative paired difference: the median of the differences is not the difference of the medians.
 
 ![mono vs stereo](../figures/compare_mono_stereo_sdr_stereo_excl.png)
 
-Stereo protocol, SDR, without the 2 *PR* tracks whose voice is almost inaudible. With all 50 tracks the median difference is +0.04 dB, without them +0.05 dB.
+Stereo wins on 26 tracks out of 50: a coin toss.
 
-## Discussion
+## After the re-run (1000 epochs)
 
-- **Stereo brings no measurable gain, and no loss either.** Differences are around 0.05 dB, every interval contains 0, and stereo wins on 26 tracks out of 50: a coin toss.
-- **Yet the cue exists.** Two explanations I haven't tested:
-  - the mono downmix keeps the Mid, so it already keeps most of the centred voice and drops a larger share of the accompaniment (3% of the voice's energy is in the Side vs 8.4% for the accompaniment). The mono model gets part of the cue for free;
-  - the model only receives the magnitudes of L and R, not their phase difference, and has to discover "L ≈ R" through its first convolution (2 → 16 channels). A Mid/Side input, or a single mask applied to the Mid, would give it the cue directly. Possible follow-up.
-- **Caveats.** One seed per configuration, and the intervals only measure variability between tracks. *(Update after later experiments: three trainings of the stereo baseline with the same seed differ by up to ±0.15 dB, paired, see [06](06_size_quality.md). So +0.04 dB is well inside training noise; only the 3-seed runs can say whether there's a small effect hiding there.)*
+At 1000 epochs with augmentation ([11](11_final.md)), the mono model could not be judged on validation: its validation crops are downmixed, which alone moves the oracle by +0.93 dB. I decided it on test instead, under the stereo protocol, and wrote that rule down before seeing the numbers. Result: stereo − mono **−0.15 dB [−0.28, +0.14]**, p = 0.41 (1 mono seed against 3 stereo seeds). Still no measurable effect.
 
-## Decision
+## What I conclude
 
-I work in stereo from now on. The stereo model is the baseline (SDR 4.50 dB, oracle 9.09 dB, gap 4.59 dB), and `src.evaluate` only evaluates in stereo (2-channel BSSEval SDR, the protocol used in the literature), which also halves evaluation time.
+- Stereo input brings neither a gain nor a loss that I can measure.
+- Two untested reasons why the cue doesn't help: the mono downmix already keeps the centred voice and drops more accompaniment, and the network sees L and R magnitudes but not their phase difference. A Mid/Side input would give it the cue directly.
+- I work in stereo anyway: it's the protocol of the literature and it halves evaluation time.
 
 ```bash
-uv run python -m src.train experiment=stereo
-uv run python -m src.train data.channels=1
-# both files store the two protocols; `sdr` alone is each model's own protocol, so compare on the same key:
+uv run python -m src.train experiment=stereo        # data.channels=1 for mono
+uv run python -m analysis.stereo_analysis
 uv run python -m analysis.compare_runs outputs/eval_mono.json outputs/eval_stereo.json --names mono stereo --metric sdr_stereo --exclude "PR -"
 ```
-
-## Re-run at 1000 epochs
-
-Re-run with the final recipe (1000 epochs, data augmentation; [11](11_final.md)). The mono model cannot be compared on validation (its validation crops are downmixed, which alone moves the oracle by +0.93 dB), so it was decided on test under the stereo protocol: stereo − mono **−0.15 dB [−0.28, +0.14]**, p = 0.41, one mono seed against three stereo seeds. Same conclusion as at 150 epochs: no measurable effect of the stereo input.
