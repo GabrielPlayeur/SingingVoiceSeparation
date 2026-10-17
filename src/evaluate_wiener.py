@@ -4,15 +4,15 @@ pipeline of `src.evaluate` (50 test tracks, stereo museval v4, official mixture 
 Why: Open-Unmix gains 0.16 dB (paired median, 6.06 -> 6.43 dB) from one EM iteration of its Wiener filter (src/evaluate_umx.py). This
 measures the same post-processing on our model, without retraining.
 
-How: the U-Net separates the track as in the evaluation (`separate_full_track`); the two estimates (vocals, and mixture - vocals as
-the accompaniment) are taken back to the STFT of the model (n_fft 2048, hop 512), their magnitudes are the source models of
-`openunmix.filtering.wiener` (one EM iteration, `softmask=False`, as Open-Unmix's default), applied to the mixture STFT by windows
-of 300 frames (Open-Unmix's `wiener_win_len`, bounds the memory), then inverse STFT. Two sources only (vocals, accompaniment),
-where Open-Unmix filters its four targets.
-⚠ The magnitudes come from the STFT of the overlap-added waveform, not from the raw mask x |X| of each window: close but not identical.
+How: inside each inference window of `separate_full_track` (5.93 s, 512 frames, 50 % overlap, Hann overlap-add, so memory does not
+grow with the track length), the U-Net mask m gives the two source models |V| = m·|X| (vocals) and |A| = (1 − m)·|X| (accompaniment,
+the complement, as in the evaluation); `openunmix.filtering.wiener` (one EM iteration, `softmask=False`, Open-Unmix's default) re-estimates
+the vocals STFT from the mixture STFT, then inverse STFT. The window plays the role of Open-Unmix's `wiener_win_len` (300 frames there).
+Two sources only, where Open-Unmix filters its four targets estimated independently.
+A first version filtered the whole-track STFT and was killed by the out-of-memory killer on long tracks (7 GB machine).
 
 Usage (openunmix is not a dependency of the project, as for evaluate_umx.py):
-    uv run --with openunmix --with torchaudio==2.10.0 python -m src.evaluate_wiener CKPT -o outputs/w32_wiener.json
+    uv run --with openunmix --with torchaudio==2.10.0 python -m src.evaluate_wiener CKPT -w 0 -o outputs/w32_wiener.json   # -w 0: metrics after each track, a 7 GB machine runs out of memory otherwise
 """
 import argparse
 
@@ -22,31 +22,36 @@ from .evaluate import evaluate
 from .inference import separate_full_track
 from .module import VoiceSeparationModule
 
-WIN = 300  # frames per Wiener window (Open-Unmix default wiener_win_len)
+
+class WienerModule(VoiceSeparationModule):
+    """Same network; `predict_step` adds the Wiener filter, so `separate_full_track` (chunks + overlap-add) is reused unchanged."""
+    niter = 1
+
+    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+        from openunmix.filtering import wiener  # imported here: only needed with this script
+        X = self._stft(batch["mixture"])                       # (B, C, F, T') complex
+        mag = X.abs()
+        mask = self.forward(mag)
+        voc = []
+        for b in range(X.shape[0]):
+            spec = torch.stack([mask[b] * mag[b], (1 - mask[b]) * mag[b]], dim=-1).permute(2, 1, 0, 3)  # (T', F, C, 2 sources)
+            # floor: bins where both source models are 0 (digital silence) gave a 0/0 and a NaN estimate on one track
+            # (Punkdisco - Oral Hygiene) in the first full run; 1e-8 is far below any real magnitude (choice of this script)
+            spec = spec.clamp_min(1e-8)
+            mix = torch.view_as_real(X[b].permute(2, 1, 0).contiguous())                                   # (T', F, C, 2 real/imag)
+            y = wiener(spec, mix, self.niter, softmask=False, residual=False)                             # (T', F, C, 2, 2 sources)
+            voc.append(torch.view_as_complex(y[..., 0].contiguous()).permute(2, 1, 0))                    # (C, F, T')
+        V = torch.stack(voc)
+        B, C = V.shape[:2]
+        wave = torch.istft(V.reshape(B * C, *V.shape[-2:]), n_fft=self.hparams.n_fft, hop_length=self.hparams.hop_length,
+                           window=self.window, length=batch["mixture"].shape[-1])
+        return wave.reshape(B, C, -1)
 
 
-def make_separate_fn(ckpt, niter=1, crop_length=261632, device="cuda"):
-    from openunmix.filtering import wiener  # imported here: only needed with this script
-    module = VoiceSeparationModule.load_from_checkpoint(ckpt, map_location="cpu").eval()
-    n_fft, hop = module.hparams.n_fft, module.hparams.hop_length
-    window = torch.hann_window(n_fft)
-    device = device if torch.cuda.is_available() else "cpu"
-
-    def stft(x):  # (2, T) -> (frames, bins, 2) complex
-        return torch.stft(x, n_fft, hop, window=window, return_complex=True, center=True).permute(2, 1, 0)
-
-    def separate(mixture):  # (2, T) -> (2, T)
-        voc = separate_full_track(module, mixture, crop_length, batch_size=8)
-        X, V, A = stft(mixture), stft(voc), stft(mixture - voc)
-        out = torch.empty_like(X)
-        for p in range(0, X.shape[0], WIN):
-            q = min(X.shape[0], p + WIN)
-            spec = torch.stack([V[p:q].abs(), A[p:q].abs()], dim=-1).to(device)        # (w, bins, 2, 2 sources)
-            mix = torch.view_as_real(X[p:q]).to(device)                                  # (w, bins, 2, 2 real/imag)
-            y = wiener(spec, mix, niter, softmask=False, residual=False)                 # (w, bins, 2, 2 real/imag, 2 sources)
-            out[p:q] = torch.view_as_complex(y[..., 0].contiguous()).cpu()
-        return torch.istft(out.permute(2, 1, 0), n_fft, hop, window=window, center=True, length=mixture.shape[-1])
-    return separate
+def make_separate_fn(ckpt, niter=1, crop_length=261632):
+    module = WienerModule.load_from_checkpoint(ckpt, map_location="cpu").eval()
+    module.niter = niter
+    return lambda mixture: separate_full_track(module, mixture, crop_length, batch_size=4)
 
 
 if __name__ == "__main__":
