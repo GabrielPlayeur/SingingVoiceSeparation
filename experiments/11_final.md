@@ -4,7 +4,7 @@
 
 **Status.** Prepared before the tag `final-v1`, while phase 2 was still running: hypotheses, predictions and rules below are in git before any phase-3 run starts. The recipe itself (`src/configs/experiment/recipe.yaml`) is filled after the phase-2 decision ([10](10_recipe.md)); everything else on this page does not depend on it.
 
-**Result in one line.** Not available yet.
+**Result in one line.** On validation at 1000 epochs: w32 +0.46 dB and wSDR +0.24 dB (3 seeds, real), SI-SDR loss −0.69 dB and compressed loss −1.28 dB (real losses), head bug +0.13 dB (inconclusive); mono is not comparable on validation and is decided on test.
 
 ## Why these runs and not the others
 
@@ -48,4 +48,28 @@ Three seeds where a decision depends on it: w32 is the candidate final model, wS
 
 ## Results
 
-*To be filled from the phase-3 runs; nothing above will be edited.*
+Phase 3 finished on 17 Oct 2026 (tag `final-v2`; `final-v1` failed at config composition because `recipe.yaml` had no `wandb` key, no run trained). Validation only, written and committed before any test evaluation. Numbers in `figures/final_decide.json`.
+
+Reference: the `const_aug` cell of [10](10_recipe.md), seeds 4.743 / 4.632 / 4.871, **mean 4.749 dB**. σ_seed = 0.089 dB. Score of a run: mean of `val/si_sdr_median` over epochs 991 to 1000.
+
+| run | seeds | scores | Δ vs reference | threshold | verdict on validation |
+|---|---|---|---|---|---|
+| `f_w32` (seed 42 = probe_w32_aug) | 3 | 5.231 / 5.117 / 5.273 | **+0.458** | 0.145 | **real gain** |
+| `f_wsdr` | 3 | 4.993 / 4.932 / 5.053 | **+0.244** | 0.145 | **real gain** |
+| `f_sisdr` | 1 | 4.059 | **−0.689** | 0.206 | **real loss** |
+| `f_power_loss` | 1 | 3.470 | **−1.278** | 0.206 | **real loss** |
+| `f_legacy` | 1 | 4.873 | +0.125 | 0.206 | inconclusive |
+| `f_mono` | 1 | 5.483 | (+0.735) | | **not comparable on validation** (below) |
+
+**The mono model is not scored on the same validation set.** With `data.channels=1`, the 240 validation crops are built from the mono downmix: the mixture's SI-SDR is −3.91 dB on them against −4.28 dB on the stereo crops, and the oracle gets 10.14 dB against 9.21 dB. The oracle alone gains 0.93 dB from the change of set, so the +0.735 dB of the model says nothing about stereo against mono. This is the protocol trap of [02](02_mono_vs_stereo.md) again, which the decision rule above did not foresee. Deviation: mono is decided on the test set under the stereo protocol (`src.evaluate` applies a mono model to L then to R), the only protocol where both models are scored on the same signals. The phase-5 test numbers decide it, and this paragraph is committed before they exist.
+
+Gap w32 − w16 (augmented, 3 seeds each) along the runs: +0.27 dB at epoch 150, +0.35 at 300, +0.45 at 600, **+0.46 at 1000**.
+
+### Against the predictions
+
+1. **w32: confirmed, H2.** +0.458 dB, inside the predicted +0.25 to +0.5 dB for a recipe with augmentation. The gap grows with training (+0.27 → +0.46 dB) instead of shrinking: with augmentation, the extra width is used, it is not only a faster start. **w32 is the final model under 4 GB** (2.63 GiB peak on the GTX 1650, [06](06_size_quality.md)).
+2. **wSDR: kept, better than predicted.** +0.244 dB on 3 seeds, above the threshold; I predicted "more likely inconclusive". It was never trained at width 32, so w32 + wSDR is not tested here: the final model stays w32 with the L1 loss, and the combination is a follow-up, not an assumption.
+3. **SI-SDR loss: rejected, and the other way.** −0.689 dB, while I predicted inconclusive, and the model is below the reference on its own training metric over the whole run (3.03 against 3.12 dB at epoch 150, 4.06 against 4.75 at epoch 1000). So the upper-bound bias I worried about did not happen. ⚠ No tested explanation; at 150 epochs and without augmentation the same loss was +0.07 dB, so the interaction with augmentation or the length of training is the first thing to look at.
+4. **Compression in the loss: confirmed, larger than predicted.** −1.278 dB (predicted −0.5 to −1.0): the gap did not close with training, so the 150-epoch loss was not a convergence artefact. The codec-weighting explanation of [05](05_amplitude_compression.md) stays the candidate; the mask histogram (phase 4) can test the other one.
+5. **Head bug: prediction rejected.** +0.125 dB, inconclusive, where I predicted a clear loss. At this budget the network with BN + ReLU before the head is not measurably worse. The cap is sigmoid(b) only when the learned head weights are negative; the 0.727 cap of the old checkpoint is not a property of the architecture. To check on its checkpoint (mask maximum and share of bins at the cap) before writing anything stronger.
+6. **Mono: decided on test** (above).
